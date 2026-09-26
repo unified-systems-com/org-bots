@@ -22,7 +22,7 @@ on:
   workflow_dispatch:
     inputs:
       only:
-        description: "Run on this ONE listed repository (name, no owner). Empty = every listed repository."
+        description: "Run on this ONE listed repository (name, no owner), or \"all\" for every listed repository."
         required: false
         default: "tap-plugin-github-core"
         type: string
