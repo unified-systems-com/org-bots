@@ -80,7 +80,10 @@ const ALL = [
 // Pilot: ORG_BOTS_ONLY=<repository name> narrows a run to ONE repository from the list
 // above, and the token is scoped the same way (token-scope.js reads this module). A name
 // that is not in the list is an error, never a way to reach an unlisted repository.
-const ONLY = process.env.ORG_BOTS_ONLY || "";
+// "all" (or nothing) means every listed repository. A workflow_dispatch string input that
+// is left empty is replaced by its default, so an empty value cannot be used to ask for "all".
+const RAW = (process.env.ORG_BOTS_ONLY || "").trim();
+const ONLY = RAW === "all" ? "" : RAW;
 const repositories = ONLY ? ALL.filter((r) => r.repository === `${ORG}/${ONLY}`) : ALL;
 if (ONLY && repositories.length !== 1) {
   throw new Error(`ORG_BOTS_ONLY=${ONLY} is not one of the listed repositories`);

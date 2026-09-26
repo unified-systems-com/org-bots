@@ -95,7 +95,7 @@ an org-wide incident: revoke it in the App's settings first.
 ```sh
 gh workflow run renovate.yml -R unified-systems-com/org-bots            # pilot: github-core only; add -f logLevel=debug to troubleshoot
 gh workflow run renovate.yml -R unified-systems-com/org-bots -f only=tap-plugin-gryphon-playground   # another single listed repo
-gh workflow run renovate.yml -R unified-systems-com/org-bots -f only=     # every listed repository
+gh workflow run renovate.yml -R unified-systems-com/org-bots -f only=all  # every listed repository (an empty value falls back to the default)
 gh workflow run release-please.yml -R unified-systems-com/org-bots
 gh run list -R unified-systems-com/org-bots --limit 5
 ```
