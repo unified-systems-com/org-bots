@@ -65,6 +65,32 @@
       groupName: "plugin pins (boot records)",
       prPriority: 5,
     },
+    {
+      // Reusable-workflow pins into tap and unified-ai-review belong to the custom manager
+      // below. The built-in github-actions manager also extracts them: it skips a bare or
+      // dated-comment pin (unversioned-reference) but tracks a `@<sha> # main` pin through
+      // github-digest, which would open a second PR editing the same line. Off here, so
+      // each pin has one owner. RE2, which Renovate compiles matchStrings with, has no
+      // lookahead, so a matchStrings negative case cannot express this.
+      matchManagers: ["github-actions"],
+      matchDepTypes: ["workflow"],
+      matchPackageNames: ["unified-systems-com/tap", "unified-systems-com/unified-ai-review"],
+      enabled: false,
+    },
+    {
+      // Later rules win: these replace the boot-record groupName above for the
+      // reusable-workflow pins, one PR per upstream repository.
+      matchManagers: ["custom.regex"],
+      matchDatasources: ["git-refs"],
+      matchDepNames: ["unified-systems-com/tap"],
+      groupName: "tap reusable workflows",
+    },
+    {
+      matchManagers: ["custom.regex"],
+      matchDatasources: ["git-refs"],
+      matchDepNames: ["unified-systems-com/unified-ai-review"],
+      groupName: "unified-ai-review reusable workflows",
+    },
   ],
   // Boot-record plugin pins (tap#635): a `rev` (the tag a human reads) and a `commit` (what
   // actually installs, tap#493) that must move together in one edit, or `tap.git_pin
@@ -84,6 +110,22 @@
         "\"url\": \"https://github.com/{{{packageName}}}\",\n          \"rev\": \"{{{newValue}}}\",\n          \"commit\": \"{{{newDigest}}}\"",
       datasourceTemplate: "github-tags",
       versioningTemplate: "semver",
+    },
+    // Reusable-workflow pins (`uses: unified-systems-com/tap/.github/workflows/<f>.yml@<sha>`,
+    // and the same into unified-ai-review) follow the head of that repository's `main`.
+    // A pin is a bare 40-character SHA; any trailing comment is optional and never read.
+    // The match stops at the SHA, so the update rewrites the SHA alone and leaves a
+    // trailing comment as it was.
+    {
+      customType: "regex",
+      managerFilePatterns: ["/^\\.github/workflows/[^/]+\\.ya?ml$/"],
+      matchStrings: [
+        "uses:\\s*[\"']?unified-systems-com/(?<repo>tap|unified-ai-review)/\\.github/workflows/[^@\\s\"']+\\.ya?ml@(?<currentDigest>[0-9a-f]{40})\\b",
+      ],
+      depNameTemplate: "unified-systems-com/{{{repo}}}",
+      packageNameTemplate: "https://github.com/unified-systems-com/{{{repo}}}",
+      currentValueTemplate: "main",
+      datasourceTemplate: "git-refs",
     },
   ],
   lockFileMaintenance: {
