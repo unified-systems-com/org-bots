@@ -1,0 +1,95 @@
+# Fleet release-please: release PRs and releases for the repositories in RELEASE_REPOS, as the
+# org-owned `tap-release-please` GitHub App.
+#
+# Per repository, each run does what release-please-action does, in the same order:
+#   1. github-release: if a release PR has been merged since the last run, tag the merge
+#      commit vX.Y.Z and publish the GitHub Release. The tag is created with the App token,
+#      so the target's tag-push workflows (release-sbom.yml) run on it; a GITHUB_TOKEN-made
+#      tag would trigger nothing.
+#   2. release-pr: open or refresh the one rolling release PR from the conventional commits
+#      since the last release.
+# Each target carries its own release-please-config.json and .release-please-manifest.json.
+# Nothing is released until a human merges that repository's release PR.
+#
+# Credential: the App's private key, held ONLY as the `TAP_RELEASE_PLEASE_PRIVATE_KEY` secret
+# of this repository's `bots` environment (deploys from `main` only). The minted token is
+# scoped to RELEASE_REPOS and to contents + pull-requests write. The client ID is public.
+#
+# Pilot scope: tap-plugin-github-core only. Add a repository by giving it the two config
+# files first, then appending it to RELEASE_REPOS (comma-separated names in the org).
+name: release-please
+
+on:
+  schedule:
+    - cron: "23 * * * *"   # hourly: a merged release PR is tagged within the hour
+  workflow_dispatch: {}
+
+permissions: {}
+
+concurrency:
+  group: release-please
+  cancel-in-progress: false
+
+env:
+  RELEASE_REPOS: tap-plugin-github-core
+
+jobs:
+  release-please:
+    name: release-please (RELEASE_REPOS)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: bots
+    permissions:
+      contents: read   # check out this private repository (the pinned CLI)
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Install the pinned release-please CLI
+        working-directory: release-please
+        # package-lock.json pins release-please and its whole closure by integrity hash.
+        run: npm ci --ignore-scripts --no-audit --no-fund
+
+      - name: Mint the tap-release-please token
+        id: app
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3
+        with:
+          client-id: Iv23liUi36xOLlt7gheA   # tap-release-please (gh api apps/tap-release-please)
+          private-key: ${{ secrets.TAP_RELEASE_PLEASE_PRIVATE_KEY }}
+          owner: unified-systems-com
+          repositories: ${{ env.RELEASE_REPOS }}
+          permission-contents: write
+          permission-pull-requests: write
+
+      - name: Release, then refresh the release PR, per repository
+        working-directory: release-please
+        env:
+          RP_TOKEN: ${{ steps.app.outputs.token }}
+        run: |
+          set -euo pipefail
+          failed=()
+          IFS=',' read -r -a repos <<< "$RELEASE_REPOS"
+          for name in "${repos[@]}"; do
+            repo="unified-systems-com/${name}"
+            echo "::group::${repo}"
+            if npx --no-install release-please github-release \
+                 --token="$RP_TOKEN" --repo-url="$repo" \
+                 --config-file=release-please-config.json \
+                 --manifest-file=.release-please-manifest.json \
+               && npx --no-install release-please release-pr \
+                 --token="$RP_TOKEN" --repo-url="$repo" \
+                 --config-file=release-please-config.json \
+                 --manifest-file=.release-please-manifest.json; then
+              echo "::endgroup::"
+            else
+              echo "::endgroup::"
+              echo "::error::release-please failed for ${repo}"
+              failed+=("$repo")
+            fi
+          done
+          # One repository failing does not stop the others; the run still goes red.
+          if (( ${#failed[@]} )); then
+            echo "failed: ${failed[*]}"
+            exit 1
+          fi

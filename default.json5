@@ -1,0 +1,94 @@
+// Shared Renovate preset for the unified-systems-com fleet:
+//   local>unified-systems-com/org-bots:default.json5
+//
+// renovate/global.js applies it to every listed repository that has no renovate config of
+// its own. It is tap's renovate.json5 (tap@3e4467ab), minus the two things that are tap's
+// own business:
+//   - the dependency dashboard (config:recommended turns it on; the pilot turns it off per
+//     repository in renovate/global.js; tap keeps its own), and
+//   - the lockfile-maintenance exemption from the PR limits (tap#625: tap's uv.lock only
+//     moves through that branch, and wolfi-base's daily digest used to starve it).
+// tap can therefore extend this preset and add those two back, and get what it has today.
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  extends: [
+    "config:recommended",
+    // Every `uses:` becomes an immutable commit-SHA pin (`@<sha> # vX.Y.Z`), kept current
+    // by reviewable PRs. A moved upstream tag is then a no-op here (the 2026-03-19
+    // trivy-action compromise shipped through moved tags).
+    "helpers:pinGitHubActionDigests",
+  ],
+  // `custom.regex` must be listed for customManagers to run at all: an enabledManagers
+  // list without it silently disables them (tap#635).
+  enabledManagers: ["dockerfile", "github-actions", "npm", "pep621", "custom.regex"],
+  labels: ["renovate"],
+  automerge: false,
+  osvVulnerabilityAlerts: true,
+  vulnerabilityAlerts: {
+    labels: ["renovate", "security"],
+  },
+  // No schedules while PRs are merged by hand: a schedule window only defers PR creation
+  // where nobody sees it (tap's 2026-08-09 first run: four green runs, zero PRs).
+  packageRules: [
+    {
+      // Our own published images: never chase our own tags.
+      matchPackageNames: ["ghcr.io/unified-systems-com/**"],
+      enabled: false,
+    },
+    {
+      // aquasecurity's org IP allow list rejects App-token API lookups from Actions
+      // runners (github.com/orgs/community/discussions/178332), so every run would WARN
+      // "no-result" here. The pin is a hand-verified commit SHA. Revisit quarterly.
+      matchPackageNames: ["aquasecurity/trivy-action"],
+      enabled: false,
+    },
+    {
+      // wolfi-base rotates its digest daily: one rolling PR carries Chainguard's patches.
+      matchManagers: ["dockerfile"],
+      groupName: "base-image digests",
+    },
+    {
+      matchManagers: ["github-actions"],
+      groupName: "github-actions",
+    },
+    {
+      matchManagers: ["pep621"],
+      groupName: "python dependencies (uv.lock)",
+    },
+    {
+      matchManagers: ["npm"],
+      groupName: "browser libraries (package-lock.json)",
+    },
+    {
+      // One PR per plugin-pin bump, ahead of the daily digest churn (tap#625).
+      matchManagers: ["custom.regex"],
+      groupName: "plugin pins (boot records)",
+      prPriority: 5,
+    },
+  ],
+  // Boot-record plugin pins (tap#635): a `rev` (the tag a human reads) and a `commit` (what
+  // actually installs, tap#493) that must move together in one edit, or `tap.git_pin
+  // --check` fails and the boot raises a moved-tag Flaw. Lookup returns the PEELED commit
+  // of an annotated tag (verified on Renovate 44.103.1 in the tap#635 spike).
+  //
+  // Matches only entries that carry a `commit`. Plugin and product boot records today pin
+  // `url` + `rev` alone, so this manager finds nothing in them.
+  customManagers: [
+    {
+      customType: "regex",
+      managerFilePatterns: ["/boot/.*\\.boot\\.json$/"],
+      matchStrings: [
+        "\"url\": \"https://github\\.com/(?<packageName>[^\"]+)\",\\s*\"rev\": \"(?<currentValue>[^\"]+)\",\\s*\"commit\": \"(?<currentDigest>[0-9a-f]{40})\"",
+      ],
+      autoReplaceStringTemplate:
+        "\"url\": \"https://github.com/{{{packageName}}}\",\n          \"rev\": \"{{{newValue}}}\",\n          \"commit\": \"{{{newDigest}}}\"",
+      datasourceTemplate: "github-tags",
+      versioningTemplate: "semver",
+    },
+  ],
+  lockFileMaintenance: {
+    enabled: true,
+    // config:recommended's built-in Monday-4am window would defer these PRs invisibly.
+    schedule: ["at any time"],
+  },
+}

@@ -1,0 +1,8 @@
+{
+  "name": "org-bots-release-please",
+  "private": true,
+  "description": "Pins the release-please CLI and its whole dependency closure (package-lock.json) for .github/workflows/release-please.yml.",
+  "dependencies": {
+    "release-please": "17.11.2"
+  }
+}
