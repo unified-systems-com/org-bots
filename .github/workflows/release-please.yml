@@ -20,8 +20,10 @@
 name: release-please
 
 on:
-  schedule:
-    - cron: "23 * * * *"   # hourly: a merged release PR is tagged within the hour
+  # Pilot: hand-run only. The hourly schedule
+  #   schedule:
+  #     - cron: "23 * * * *"   # hourly: a merged release PR is tagged within the hour
+  # comes back in the PR that ends the pilot.
   workflow_dispatch: {}
 
 permissions: {}
