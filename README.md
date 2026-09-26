@@ -21,11 +21,11 @@ comment, or run workflows against it.
 
 | Path | What it is |
 | --- | --- |
-| `.github/workflows/renovate.yml` | Daily Renovate run, plus manual dispatch |
+| `.github/workflows/renovate.yml` | Renovate run. Pilot: manual dispatch only, one repository per run (`only`, default `tap-plugin-github-core`); the daily schedule returns when the pilot ends |
 | `renovate/global.js` | Renovate's global config: the explicit repository list, the bot identity, PR limits, and no onboarding |
 | `renovate/token-scope.js` | Derives the Renovate token's repository scope from `global.js` |
 | `default.json5` | The shared repository preset (`local>unified-systems-com/org-bots:default.json5`), including tap's boot-record pin manager |
-| `.github/workflows/release-please.yml` | Hourly release-please run over `RELEASE_REPOS`, plus manual dispatch |
+| `.github/workflows/release-please.yml` | release-please over `RELEASE_REPOS`. Pilot: manual dispatch only; the hourly schedule returns when the pilot ends |
 | `release-please/package.json`, `package-lock.json` | Pin the release-please CLI and its whole dependency closure |
 | `.github/CODEOWNERS` | Every path needs the owner's review |
 
@@ -93,7 +93,9 @@ an org-wide incident: revoke it in the App's settings first.
 ## Running a job by hand
 
 ```sh
-gh workflow run renovate.yml -R unified-systems-com/org-bots            # add -f logLevel=debug to troubleshoot
+gh workflow run renovate.yml -R unified-systems-com/org-bots            # pilot: github-core only; add -f logLevel=debug to troubleshoot
+gh workflow run renovate.yml -R unified-systems-com/org-bots -f only=tap-plugin-gryphon-playground   # another single listed repo
+gh workflow run renovate.yml -R unified-systems-com/org-bots -f only=     # every listed repository
 gh workflow run release-please.yml -R unified-systems-com/org-bots
 gh run list -R unified-systems-com/org-bots --limit 5
 ```

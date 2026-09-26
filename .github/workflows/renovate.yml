@@ -15,10 +15,17 @@
 name: renovate
 
 on:
-  schedule:
-    - cron: "15 7 * * *"   # daily 07:15 UTC
+  # Pilot: hand-run only, one repository at a time. The daily schedule
+  #   schedule:
+  #     - cron: "15 7 * * *"   # daily 07:15 UTC
+  # comes back, fleet-wide, in the PR that ends the pilot.
   workflow_dispatch:
     inputs:
+      only:
+        description: "Run on this ONE listed repository (name, no owner). Empty = every listed repository."
+        required: false
+        default: "tap-plugin-github-core"
+        type: string
       logLevel:
         description: "Renovate log level (debug for troubleshooting)"
         required: false
@@ -49,6 +56,7 @@ jobs:
         id: scope
         env:
           SELF: ${{ github.event.repository.name }}
+          ORG_BOTS_ONLY: ${{ inputs.only }}
         run: node renovate/token-scope.js "$SELF" >> "$GITHUB_OUTPUT"
 
       - name: Mint the tap-renovate token
@@ -76,5 +84,9 @@ jobs:
           # cannot swap the code that holds it. Resolved from ghcr.io/renovatebot/renovate:44
           # on 2026-09-26 (Renovate 44.115.10).
           renovate-version: 44@sha256:e262ed52b23dd8c545c80faf5b1ad5c95a07b3f198888de8d7b8928f45c307c7
+          # Pass ORG_BOTS_ONLY into the container too, so global.js narrows the same way the
+          # token did. The rest is the action's default allow-list.
+          env-regex: "^(?:RENOVATE_\\w+|LOG_LEVEL|GITHUB_COM_TOKEN|NODE_OPTIONS|NO_COLOR|ORG_BOTS_ONLY)$"
         env:
           LOG_LEVEL: ${{ inputs.logLevel || 'info' }}
+          ORG_BOTS_ONLY: ${{ inputs.only }}

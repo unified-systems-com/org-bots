@@ -66,21 +66,32 @@ const FLEET = [
   "tap-plugin-samsite",
 ];
 
+const ALL = [
+  ...SELF_CONFIGURED,
+  ...FLEET.map((name) => ({
+    repository: `${ORG}/${name}`,
+    extends: [FLEET_PRESET],
+    // The preset extends config:recommended, which turns the dashboard on; a key set
+    // here beats the presets it extends.
+    dependencyDashboard: false,
+  })),
+];
+
+// Pilot: ORG_BOTS_ONLY=<repository name> narrows a run to ONE repository from the list
+// above, and the token is scoped the same way (token-scope.js reads this module). A name
+// that is not in the list is an error, never a way to reach an unlisted repository.
+const ONLY = process.env.ORG_BOTS_ONLY || "";
+const repositories = ONLY ? ALL.filter((r) => r.repository === `${ORG}/${ONLY}`) : ALL;
+if (ONLY && repositories.length !== 1) {
+  throw new Error(`ORG_BOTS_ONLY=${ONLY} is not one of the listed repositories`);
+}
+
 module.exports = {
   platform: "github",
   // Never enumerate the installation: the App is installed org-wide, and this list is the
   // only thing that decides which repositories get PRs.
   autodiscover: false,
-  repositories: [
-    ...SELF_CONFIGURED,
-    ...FLEET.map((name) => ({
-      repository: `${ORG}/${name}`,
-      extends: [FLEET_PRESET],
-      // The preset extends config:recommended, which turns the dashboard on; a key set
-      // here beats the presets it extends.
-      dependencyDashboard: false,
-    })),
-  ],
+  repositories,
 
   // Commits are authored by the App's own bot account (user id from
   // `gh api users/tap-renovate%5Bbot%5D`), never by Renovate's Mend-owned default address.
