@@ -1,16 +1,18 @@
-// Shared Renovate preset for the unified-systems-com fleet:
-//   local>unified-systems-com/org-bots:default.json5
+// Shared Renovate repository config for the unified-systems-com fleet.
 //
-// renovate/global.js applies it to every listed repository that has no renovate config of
-// its own. It is tap's renovate.json5 (tap@3e4467ab), minus the two things that are tap's
-// own business:
-//   - the dependency dashboard (config:recommended turns it on; the pilot turns it off per
-//     repository in renovate/global.js; tap keeps its own), and
+// renovate/global.js spreads this object into every listed repository that has no renovate
+// config of its own. It is tap's renovate.json5 (tap@3e4467ab), minus the two things that
+// are tap's own business:
+//   - the dependency dashboard (config:recommended turns it on; global.js forces it off), and
 //   - the lockfile-maintenance exemption from the PR limits (tap#625: tap's uv.lock only
 //     moves through that branch, and wolfi-base's daily digest used to starve it).
-// tap can therefore extend this preset and add those two back, and get what it has today.
-{
-  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+//
+// Why a module inside the global config, not a `local>unified-systems-com/org-bots:...`
+// preset: Renovate resolves a `local>` preset through the platform with the run's token.
+// The run's token is now the fork bot's, and the fork bot has no access to this private
+// repository, so the preset lookup would fail on every repository. Loaded from disk here,
+// the config needs no platform read at all.
+module.exports = {
   extends: [
     "config:recommended",
     // Every `uses:` becomes an immutable commit-SHA pin (`@<sha> # vX.Y.Z`), kept current
@@ -133,4 +135,4 @@
     // config:recommended's built-in Monday-4am window would defer these PRs invisibly.
     schedule: ["at any time"],
   },
-}
+};
