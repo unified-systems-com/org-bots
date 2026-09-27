@@ -1,16 +1,18 @@
-// Shared Renovate preset for the unified-systems-com fleet:
-//   local>unified-systems-com/org-bots:default.json5
+// Shared Renovate repository config for the unified-systems-com fleet.
 //
-// renovate/global.js applies it to every listed repository that has no renovate config of
-// its own. It is tap's renovate.json5 (tap@3e4467ab), minus the two things that are tap's
-// own business:
-//   - the dependency dashboard (config:recommended turns it on; the pilot turns it off per
-//     repository in renovate/global.js; tap keeps its own), and
+// renovate/global.js spreads this object into every listed repository that has no renovate
+// config of its own. It is tap's renovate.json5 (tap@3e4467ab), minus the two things that
+// are tap's own business:
+//   - the dependency dashboard (config:recommended turns it on; global.js forces it off), and
 //   - the lockfile-maintenance exemption from the PR limits (tap#625: tap's uv.lock only
 //     moves through that branch, and wolfi-base's daily digest used to starve it).
-// tap can therefore extend this preset and add those two back, and get what it has today.
-{
-  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+//
+// Why a module inside the global config, not a `local>unified-systems-com/org-bots:...`
+// preset: Renovate resolves a `local>` preset through the platform with the run's token.
+// The run's token is now the fork bot's, and the fork bot has no access to this private
+// repository, so the preset lookup would fail on every repository. Loaded from disk here,
+// the config needs no platform read at all.
+module.exports = {
   extends: [
     "config:recommended",
     // Every `uses:` becomes an immutable commit-SHA pin (`@<sha> # vX.Y.Z`), kept current
@@ -78,8 +80,20 @@
       enabled: false,
     },
     {
+      // A reusable-workflow call on the branch itself (`...yml@main`) has no digest yet. The
+      // custom manager below extracts it with currentValue `main` and no currentDigest, and
+      // pinDigests turns that into a pinDigest update to the head of main, so the call is
+      // pinned by the same PR that later keeps it current.
+      matchManagers: ["custom.regex"],
+      matchDatasources: ["git-refs"],
+      matchDepNames: ["unified-systems-com/tap", "unified-systems-com/unified-ai-review"],
+      pinDigests: true,
+    },
+    {
       // Later rules win: these replace the boot-record groupName above for the
-      // reusable-workflow pins, one PR per upstream repository.
+      // reusable-workflow pins, one PR per upstream repository. The package rules run
+      // again after the update-type config is merged, so they also replace pinDigest's
+      // default "Pin Dependencies" group.
       matchManagers: ["custom.regex"],
       matchDatasources: ["git-refs"],
       matchDepNames: ["unified-systems-com/tap"],
@@ -111,21 +125,31 @@
       datasourceTemplate: "github-tags",
       versioningTemplate: "semver",
     },
-    // Reusable-workflow pins (`uses: unified-systems-com/tap/.github/workflows/<f>.yml@<sha>`,
+    // Reusable-workflow calls (`uses: unified-systems-com/tap/.github/workflows/<f>.yml@<ref>`,
     // and the same into unified-ai-review) follow the head of that repository's `main`.
-    // A pin is a bare 40-character SHA; any trailing comment is optional and never read.
-    // The match stops at the SHA, so the update rewrites the SHA alone and leaves a
-    // trailing comment as it was.
+    // The ref is either a pin, a bare 40-character SHA (any trailing comment is optional and
+    // never read), or the branch `main` itself, which the pinDigests rule above pins.
+    //
+    // ONE matchString with an alternation, not one per form: the regex manager lists deps
+    // matchString by matchString, and a pin moves a line from one form to the other, so two
+    // matchStrings would renumber the deps and fail Renovate's post-edit re-extraction. It
+    // also means one line is only ever matched once.
+    //
+    // The match stops at the ref, and the template rewrites only the ref at its end, so the
+    // rest of the line (quoting, spacing, a trailing comment) stays as it was. The template
+    // is needed because a pin has no currentDigest to substitute: without it Renovate would
+    // replace `main` with `main`.
     {
       customType: "regex",
       managerFilePatterns: ["/^\\.github/workflows/[^/]+\\.ya?ml$/"],
       matchStrings: [
-        "uses:\\s*[\"']?unified-systems-com/(?<repo>tap|unified-ai-review)/\\.github/workflows/[^@\\s\"']+\\.ya?ml@(?<currentDigest>[0-9a-f]{40})\\b",
+        "uses:\\s*[\"']?unified-systems-com/(?<repo>tap|unified-ai-review)/\\.github/workflows/[^@\\s\"']+\\.ya?ml@(?:(?<currentDigest>[0-9a-f]{40})|main)\\b",
       ],
       depNameTemplate: "unified-systems-com/{{{repo}}}",
       packageNameTemplate: "https://github.com/unified-systems-com/{{{repo}}}",
       currentValueTemplate: "main",
       datasourceTemplate: "git-refs",
+      autoReplaceStringTemplate: "{{{replace '(?:[0-9a-f]{40}|main)$' newDigest replaceString}}}",
     },
   ],
   lockFileMaintenance: {
@@ -133,4 +157,4 @@
     // config:recommended's built-in Monday-4am window would defer these PRs invisibly.
     schedule: ["at any time"],
   },
-}
+};

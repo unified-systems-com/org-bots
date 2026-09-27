@@ -1,28 +1,34 @@
-# Fleet release-please: release PRs and releases for the repositories in RELEASE_REPOS, as the
-# org-owned `tap-release-please` GitHub App.
+# Fleet release-please, stage 1 of 2: open or refresh each repository's rolling release PR, in
+# FORK MODE, as the fork bot (a machine user with no role on any org repository).
 #
-# Per repository, each run does what release-please-action does, in the same order:
-#   1. github-release: if a release PR has been merged since the last run, tag the merge
-#      commit vX.Y.Z and publish the GitHub Release. The tag is created with the App token,
-#      so the target's tag-push workflows (release-sbom.yml) run on it; a GITHUB_TOKEN-made
-#      tag would trigger nothing.
-#   2. release-pr: open or refresh the one rolling release PR from the conventional commits
-#      since the last release.
-# Each target carries its own release-please-config.json and .release-please-manifest.json.
-# Nothing is released until a human merges that repository's release PR.
+# Per repository in RELEASE_REPOS, this runs `release-please release-pr --fork`: the release
+# branch is pushed to the bot's fork, and the PR is opened from there, as an outside
+# contributor's would be. Nothing here can write to an org repository.
 #
-# Credential: the App's private key, held ONLY as the `TAP_RELEASE_PLEASE_PRIVATE_KEY` secret
-# of this repository's `bots` environment (deploys from `main` only). The minted token is
-# scoped to RELEASE_REPOS and to contents + pull-requests write. The client ID is public.
+# Stage 2, tagging and publishing the release after a human merges the release PR, needs
+# `contents: write` on the target, so it does NOT run here. The maintainer runs it from their
+# own machine with their own credential: scripts/cut-release.sh (see README, "Cutting a
+# release").
 #
-# Pilot scope: tap-plugin-github-core only. Add a repository by giving it the two config
-# files first, then appending it to RELEASE_REPOS (comma-separated names in the org).
+# Labels: release-please finds its own open release PR, and later the merged one, by the
+# `autorelease: pending` label. Applying a label needs triage access, which the bot does not
+# have, so the bot opens the PR with --skip-labeling and a maintainer labels it. Until the
+# label is on, this job refuses to refresh that PR (see "unlabelled" below): release-please
+# would otherwise push new commits to the branch but leave the old title and body, and the
+# body is what stage 2 reads the version from.
+#
+# Credential: the bot's token, held ONLY as the `FORK_BOT_TOKEN` secret of this repository's
+# `bots` environment (deploys from `main` only). The bot's login is the environment VARIABLE
+# `FORK_BOT_LOGIN`.
+#
+# Adding a repository: give it release-please-config.json and .release-please-manifest.json
+# first, then append its name to RELEASE_REPOS (comma-separated names in the org).
 name: release-please
 
 on:
   # Pilot: hand-run only. The hourly schedule
   #   schedule:
-  #     - cron: "23 * * * *"   # hourly: a merged release PR is tagged within the hour
+  #     - cron: "23 * * * *"   # hourly
   # comes back in the PR that ends the pilot.
   workflow_dispatch: {}
 
@@ -33,7 +39,10 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  RELEASE_REPOS: tap-plugin-github-core
+  # tap is listed, but this job skips it while tap still runs its own release-please.yml
+  # (the "own lane" check below). Moving tap here also needs its uv.lock refresh solved
+  # and its PR-check policy decided: README, "tap".
+  RELEASE_REPOS: tap-plugin-github-core,tap
 
 jobs:
   release-please:
@@ -53,36 +62,83 @@ jobs:
         # package-lock.json pins release-please and its whole closure by integrity hash.
         run: npm ci --ignore-scripts --no-audit --no-fund
 
-      - name: Mint the tap-release-please token
-        id: app
-        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3
-        with:
-          client-id: Iv23liUi36xOLlt7gheA   # tap-release-please (gh api apps/tap-release-please)
-          private-key: ${{ secrets.TAP_RELEASE_PLEASE_PRIVATE_KEY }}
-          owner: unified-systems-com
-          repositories: ${{ env.RELEASE_REPOS }}
-          permission-contents: write
-          permission-pull-requests: write
-
-      - name: Release, then refresh the release PR, per repository
+      - name: Refresh the release PR from the bot's fork, per repository
         working-directory: release-please
         env:
-          RP_TOKEN: ${{ steps.app.outputs.token }}
+          RP_TOKEN: ${{ secrets.FORK_BOT_TOKEN }}
+          GH_TOKEN: ${{ secrets.FORK_BOT_TOKEN }}
+          BOT: ${{ vars.FORK_BOT_LOGIN }}
         run: |
           set -euo pipefail
+          if [[ ! "$BOT" =~ ^[A-Za-z0-9][A-Za-z0-9-]{0,38}$ ]]; then
+            echo "::error::the bots environment variable FORK_BOT_LOGIN is unset or malformed"
+            exit 1
+          fi
           failed=()
           IFS=',' read -r -a repos <<< "$RELEASE_REPOS"
           for name in "${repos[@]}"; do
             repo="unified-systems-com/${name}"
             echo "::group::${repo}"
-            if npx --no-install release-please github-release \
+
+            # Own lane: a repository that still runs its own release-please workflow has an
+            # in-repo release PR already; a second one from the fork would compete with it.
+            if ! workflows=$(gh api "repos/${repo}/contents/.github/workflows" --jq '.[].name'); then
+              echo "::endgroup::"
+              echo "::error::could not list ${repo}'s workflows"
+              failed+=("$repo"); continue
+            fi
+            if grep -qxE 'release-please\.ya?ml' <<< "$workflows"; then
+              echo "::endgroup::"
+              echo "::warning::${repo} still runs its own release-please workflow; skipped until that is retired"
+              continue
+            fi
+
+            # One fork per account. Renovate names its fork <owner>-_-<repo>, but
+            # release-please's fork code addresses the upstream PR by the FORK's repository
+            # name, which only works when the two names match. So the bot's fork is renamed
+            # to <repo> when needed. Renovate finds its fork by owner, not name, so the rename
+            # does not disturb it. With no fork yet, release-please creates one named <repo>.
+            if ! fork_name=$(gh api --paginate "repos/${repo}/forks?per_page=100" \
+                               --jq ".[] | select(.owner.login == \"${BOT}\") | .name"); then
+              echo "::endgroup::"
+              echo "::error::could not list ${repo}'s forks"
+              failed+=("$repo"); continue
+            fi
+            if [[ -n "$fork_name" && "$fork_name" != "$name" ]]; then
+              echo "renaming ${BOT}/${fork_name} to ${BOT}/${name}"
+              if ! gh api -X PATCH "repos/${BOT}/${fork_name}" -f name="$name" --silent; then
+                echo "::endgroup::"
+                echo "::error::could not rename ${BOT}/${fork_name} to ${name}"
+                failed+=("$repo"); continue
+              fi
+            fi
+
+            # Unlabelled: an open release PR from the bot's fork without `autorelease: pending`
+            # is invisible to release-please, which would push to its branch and leave its
+            # title and body stale. Stop and ask for the label instead.
+            if ! unlabelled=$(gh pr list -R "$repo" --state open --limit 100 \
+                                --json number,headRefName,headRepositoryOwner,labels \
+                                --jq ".[] | select(.headRepositoryOwner.login == \"${BOT}\")
+                                          | select(.headRefName | startswith(\"release-please--\"))
+                                          | select(any(.labels[]; .name == \"autorelease: pending\") | not)
+                                          | .number"); then
+              echo "::endgroup::"
+              echo "::error::could not list ${repo}'s open pull requests"
+              failed+=("$repo"); continue
+            fi
+            if [[ -n "$unlabelled" ]]; then
+              echo "::endgroup::"
+              for n in $unlabelled; do
+                echo "::error::${repo}#${n} needs the 'autorelease: pending' label (triage access) before release-please can refresh it"
+              done
+              failed+=("$repo"); continue
+            fi
+
+            if npx --no-install release-please release-pr \
                  --token="$RP_TOKEN" --repo-url="$repo" \
                  --config-file=release-please-config.json \
                  --manifest-file=.release-please-manifest.json \
-               && npx --no-install release-please release-pr \
-                 --token="$RP_TOKEN" --repo-url="$repo" \
-                 --config-file=release-please-config.json \
-                 --manifest-file=.release-please-manifest.json; then
+                 --fork --skip-labeling; then
               echo "::endgroup::"
             else
               echo "::endgroup::"

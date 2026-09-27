@@ -1,25 +1,34 @@
 // Renovate GLOBAL (self-hosted) configuration for the unified-systems-com fleet.
 //
-// This file is read by .github/workflows/renovate.yml. It says WHICH repositories the
-// tap-renovate App works on and the bot-wide rules. It does not say how each repository's
-// dependencies are grouped or labelled: that is repository config, which comes from
+// This file is read by .github/workflows/renovate.yml. It says WHICH repositories the fork
+// bot works on and the bot-wide rules. It does not say how each repository's dependencies
+// are grouped or labelled: that is repository config, which comes from
 //   - the repository's own renovate.json5, when it has one (today only tap does), or
-//   - default.json5 in this repo, which every other listed repository extends below.
+//   - renovate/preset.js in this repo, which every other listed repository gets below.
 //
-// CommonJS rather than JSON5 for one reason: the workflow reads `repositories` from this
-// same module to scope the App token, so the list the token covers and the list Renovate
-// works on cannot drift apart.
+// Fork mode: Renovate runs as a machine user that has no role on any org repository. It
+// forks each repository into its own account, pushes update branches there, and opens PRs
+// from the fork, as an outside contributor would. The workflow passes the bot's token as
+// both the platform token and RENOVATE_FORK_TOKEN.
+//
+// CommonJS rather than JSON5 so the bot identity comes from the environment (below) and the
+// shared repository config can be loaded from disk (renovate/preset.js explains why).
 
 const ORG = "unified-systems-com";
 
-// The shared preset. `local>` resolves on the platform Renovate is running against, with
-// the App token, which is why the workflow's token also covers this (private) repo.
-const FLEET_PRESET = `local>${ORG}/org-bots:default.json5`;
+// The shared repository config, loaded from disk (see renovate/preset.js for why).
+const FLEET_PRESET = require("./preset.js");
 
 // tap carries its own renovate.json5, with the same boot-record custom manager as
-// default.json5. It is listed WITHOUT the preset: extending both would register that
-// manager twice. tap moves onto the preset in the follow-up that retires its own
-// renovate.yml (see README, "Follow-up in tap").
+// preset.js. It is listed WITHOUT the shared config: applying both would register that
+// manager twice.
+//
+// Open policy decision: tap's sign-off (DCO) and issue-link checks exempt only the approved
+// identities in tap's tap/tap.pr-bots.json, and those require GitHub account type `Bot`
+// (a GitHub App). The fork bot is a user account, so its PRs to tap fail both checks until
+// that rule changes. Renovate must NOT add a Signed-off-by trailer to get past it: an
+// automated system never certifies the DCO. tap stays listed because it gets the same
+// coverage as every other repository; see README, "Open decision: tap's PR checks".
 const SELF_CONFIGURED = [
   {
     repository: `${ORG}/tap`,
@@ -70,15 +79,13 @@ const ALL = [
   ...SELF_CONFIGURED,
   ...FLEET.map((name) => ({
     repository: `${ORG}/${name}`,
-    extends: [FLEET_PRESET],
-    // The preset extends config:recommended, which turns the dashboard on; a key set
-    // here beats the presets it extends.
-    dependencyDashboard: false,
+    ...FLEET_PRESET,
   })),
 ];
 
 // Pilot: ORG_BOTS_ONLY=<repository name> narrows a run to ONE repository from the list
-// above, and the token is scoped the same way (token-scope.js reads this module). A name
+// above. The token is a user token, so it is not scoped per repository: this list, and
+// autodiscover off, are what decide which repositories get PRs. A name
 // that is not in the list is an error, never a way to reach an unlisted repository.
 // "all" (or nothing) means every listed repository. A workflow_dispatch string input that
 // is left empty is replaced by its default, so an empty value cannot be used to ask for "all".
@@ -89,17 +96,32 @@ if (ONLY && repositories.length !== 1) {
   throw new Error(`ORG_BOTS_ONLY=${ONLY} is not one of the listed repositories`);
 }
 
+// The fork bot's identity, from the `bots` environment's VARIABLES (not secrets: neither
+// is sensitive). Set both when the account exists:
+//   FORK_BOT_LOGIN  the account's login
+//   FORK_BOT_ID     its numeric id: `gh api users/<login> --jq .id`
+// Commits are then authored by the bot's own noreply address, never by Renovate's
+// Mend-owned default. A missing or malformed value stops the run before any repository is
+// touched, rather than committing under the wrong name.
+const LOGIN = (process.env.FORK_BOT_LOGIN || "").trim();
+const ID = (process.env.FORK_BOT_ID || "").trim();
+if (!/^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$/.test(LOGIN) || !/^[1-9][0-9]*$/.test(ID)) {
+  throw new Error("FORK_BOT_LOGIN and FORK_BOT_ID must be set to the fork bot's login and numeric id");
+}
+
 module.exports = {
   platform: "github",
-  // Never enumerate the installation: the App is installed org-wide, and this list is the
-  // only thing that decides which repositories get PRs.
+  // Never enumerate what the token can see: this list is the only thing that decides which
+  // repositories get PRs.
   autodiscover: false,
   repositories,
 
-  // Commits are authored by the App's own bot account (user id from
-  // `gh api users/tap-renovate%5Bbot%5D`), never by Renovate's Mend-owned default address.
-  username: "tap-renovate[bot]",
-  gitAuthor: "tap-renovate[bot] <315114127+tap-renovate[bot]@users.noreply.github.com>",
+  username: LOGIN,
+  gitAuthor: `${LOGIN} <${ID}+${LOGIN}@users.noreply.github.com>`,
+
+  // Fork mode (the token itself arrives as RENOVATE_FORK_TOKEN). The fork is created on
+  // first use and reused after that.
+  forkCreation: true,
 
   // No onboarding PRs, and a repository with no renovate config is still processed
   // (with the preset above).
@@ -113,7 +135,11 @@ module.exports = {
   // PR-only: a human merges every update.
   automerge: false,
 
-  // No dependency-dashboard issues across the fleet during the pilot. tap's own config
-  // turns its dashboard back on, as it has today.
-  dependencyDashboard: false,
+  // No dependency-dashboard issues anywhere, tap included. `force` wins over repository
+  // config, so tap's own renovate.json5 cannot turn it back on. An outside account's
+  // issue can also be refused (issues off, or interaction limits), so the run would not
+  // depend on it anyway.
+  force: {
+    dependencyDashboard: false,
+  },
 };

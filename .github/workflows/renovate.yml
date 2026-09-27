@@ -1,17 +1,18 @@
 # Fleet Renovate: dependency-update PRs across the repositories listed in renovate/global.js,
-# as the org-owned `tap-renovate` GitHub App.
+# in FORK MODE, as the fork bot: a machine user with no role on any org repository.
 #
-# Credential: the App's private key, held ONLY as the `TAP_RENOVATE_PRIVATE_KEY` secret of
-# this repository's `bots` environment. That environment deploys from `main` only, so the
-# key is handed to nothing but a workflow already merged to main here. The job mints a
-# ~1h installation token scoped to exactly the listed repositories (plus this one, for the
-# shared preset) and to the App's own permission set. The client ID below is public.
+# Renovate forks each listed repository into the bot's account, pushes its update branches
+# to that fork, and opens the PR from the fork, exactly as an outside contributor would.
+# Nothing here can write to an org repository: the bot's writes reach only its own forks.
+# Every update is a PR that runs the target's own checks and is merged by a human.
 #
-# Rotation: generate a new key in the App's settings, replace the environment secret, delete
-# the old key there. No restart semantics: the next run picks it up.
+# Credential: the bot's token, held ONLY as the `FORK_BOT_TOKEN` secret of this repository's
+# `bots` environment (deploys from `main` only). It is passed as both the platform token and
+# RENOVATE_FORK_TOKEN, which is what fork mode expects. The bot's login and numeric id are
+# the environment VARIABLES `FORK_BOT_LOGIN` and `FORK_BOT_ID` (see renovate/global.js).
 #
-# PR-only: automerge is off, so every update is a PR that runs the target repository's own
-# checks and is merged by a human.
+# Rotation: mint a new token on the bot account, replace the environment secret, revoke the
+# old token there. The next run picks it up.
 name: renovate
 
 on:
@@ -52,41 +53,25 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Read the repository list from the global config
-        id: scope
-        env:
-          SELF: ${{ github.event.repository.name }}
-          ORG_BOTS_ONLY: ${{ inputs.only }}
-        run: node renovate/token-scope.js "$SELF" >> "$GITHUB_OUTPUT"
-
-      - name: Mint the tap-renovate token
-        id: app
-        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3
-        with:
-          client-id: Iv23liLCwMcCyJuDEusb   # tap-renovate (gh api apps/tap-renovate)
-          private-key: ${{ secrets.TAP_RENOVATE_PRIVATE_KEY }}
-          owner: unified-systems-com
-          repositories: ${{ steps.scope.outputs.repositories }}
-          permission-contents: write
-          permission-pull-requests: write
-          permission-workflows: write
-          permission-issues: write
-          permission-checks: read
-          permission-statuses: read
-          permission-vulnerability-alerts: read
-
       - name: Run Renovate
         uses: renovatebot/github-action@9fea9f0fbf80401026d11d03911d62b1f70fef1f # v46.3.3
         with:
-          token: ${{ steps.app.outputs.token }}
+          token: ${{ secrets.FORK_BOT_TOKEN }}
           configurationFile: renovate/global.js
+          # The action mounts the configuration file alone, at /github-action/global.js.
+          # global.js requires ./preset.js, so mount that beside it, read-only.
+          docker-volumes: ${{ github.workspace }}/renovate/preset.js:/github-action/preset.js:ro
           # The container receives the token, so pin its image by digest: a retag of `44`
           # cannot swap the code that holds it. Resolved from ghcr.io/renovatebot/renovate:44
           # on 2026-09-26 (Renovate 44.115.10).
           renovate-version: 44@sha256:e262ed52b23dd8c545c80faf5b1ad5c95a07b3f198888de8d7b8928f45c307c7
-          # Pass ORG_BOTS_ONLY into the container too, so global.js narrows the same way the
-          # token did. The rest is the action's default allow-list.
-          env-regex: "^(?:RENOVATE_\\w+|LOG_LEVEL|GITHUB_COM_TOKEN|NODE_OPTIONS|NO_COLOR|ORG_BOTS_ONLY)$"
+          # global.js reads ORG_BOTS_ONLY (the pilot's one-repository narrowing) and the bot
+          # identity, so pass those into the container too. The rest is the action's default
+          # allow-list.
+          env-regex: "^(?:RENOVATE_\\w+|LOG_LEVEL|GITHUB_COM_TOKEN|NODE_OPTIONS|NO_COLOR|ORG_BOTS_ONLY|FORK_BOT_LOGIN|FORK_BOT_ID)$"
         env:
+          RENOVATE_FORK_TOKEN: ${{ secrets.FORK_BOT_TOKEN }}
+          FORK_BOT_LOGIN: ${{ vars.FORK_BOT_LOGIN }}
+          FORK_BOT_ID: ${{ vars.FORK_BOT_ID }}
           LOG_LEVEL: ${{ inputs.logLevel || 'info' }}
           ORG_BOTS_ONLY: ${{ inputs.only }}
