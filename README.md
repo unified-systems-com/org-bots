@@ -22,6 +22,8 @@ comment, or run workflows against it.
 | `renovate/preset.js` | The shared repository config every listed repository without its own gets, including tap's boot-record pin manager |
 | `.github/workflows/release-please.yml` | release-please stage 1 (`release-pr --fork`) over `RELEASE_REPOS`. Pilot: manual dispatch only |
 | `scripts/cut-release.sh` | release-please stage 2 (`github-release`), run by the maintainer. Dry run by default |
+| `scripts/approve_bot_runs.py` | Approves the fork bot's PR workflow runs that wait for "Approve and run", by fixed rules. Dry run by default |
+| `tests/` | Offline tests for `approve_bot_runs.py` (fixture JSON, no network): `python3 -m unittest discover -s tests` |
 | `release-please/package.json`, `package-lock.json` | Pin the release-please CLI and its whole dependency closure, for CI and for the script |
 | `.github/CODEOWNERS` | Every path needs the owner's review |
 
@@ -46,7 +48,8 @@ a human merges.
 - **"Approve and run" on fork PRs.** GitHub does not run a fork PR's workflows from a first-time
   contributor until someone with write access clicks *Approve and run workflows*. Depending on the
   repository's Actions setting, that can apply to every PR from an outside account, not only the
-  first. Until checks run, the PR is not mergeable.
+  first. Until checks run, the PR is not mergeable. Use `scripts/approve_bot_runs.py`, not the
+  button (see "Approving the bot's runs").
 - **Label each new release PR `autorelease: pending`.** Applying a label needs triage access
   ([GitHub docs, "Managing labels"](https://docs.github.com/en/issues/using-labels-and-milestones-to-track-work/managing-labels):
   "Anyone with triage access to a repository can apply and dismiss labels"), so the bot opens
@@ -135,6 +138,32 @@ credential. The org `tag-protection` ruleset prevents a tag's deletion or update
 The CLI runs in a disposable `node:22-slim` container (pinned by digest) from this repository's
 lockfile. Your token reaches the container only as an environment variable. The script never
 writes it to disk and never prints it.
+
+## Approving the bot's runs
+
+```sh
+scripts/approve_bot_runs.py                 # dry run over every repository in renovate/global.js
+scripts/approve_bot_runs.py --repo zizmor-tap
+scripts/approve_bot_runs.py --yes           # approve what passed, with your gh login
+```
+
+Approving a run executes the PR's code, and its workflow files, in the target repository's
+Actions. So the decision is made only from structured API fields, never from PR titles, bodies,
+comments, commit messages or branch names, which the PR's author writes. A run is approved only
+when all of these hold, and otherwise it is left waiting with a one-line reason:
+
+1. it is a `pull_request` run waiting for approval (`conclusion` `action_required`);
+2. its actor and triggering actor are the fork bot **by numeric id** (the script's `BOT_ID`);
+3. its head repository is a fork owned by the bot (by id) whose parent is the target;
+4. exactly one open PR matches it, authored by the bot (by id, type `User`), from that fork and
+   branch, at the run's head sha, into the default branch;
+5. every changed file is on the script's `ALLOWED_PATHS`, none is removed, renamed or copied, no
+   workflow file is added, and there are at most 50;
+6. the repository is listed in `renovate/global.js` (`FLEET` and `SELF_CONFIGURED`), which the
+   script reads without executing it and refuses to run if it finds no repositories.
+
+Widening `ALLOWED_PATHS` or any other rule is the code owner's decision. The script uses only the
+Python standard library and your `gh` login; it calls `gh` with an argument list, never a shell.
 
 ## Adding a repository
 

@@ -1,0 +1,62 @@
+{
+  "description": "One fork-bot Renovate run waiting for approval on tap-plugin-github-core, with everything the decision fetches. Field shapes follow GitHub's REST responses (runs list, repositories/{id}, pulls, pulls/{n}/files); values are made up. Tests mutate a copy.",
+  "target": "unified-systems-com/tap-plugin-github-core",
+  "target_repo": {
+    "description": "GET repos/{target}",
+    "id": 1000,
+    "full_name": "unified-systems-com/tap-plugin-github-core",
+    "default_branch": "main",
+    "fork": false
+  },
+  "run": {
+    "description": "One entry of GET repos/{target}/actions/runs?event=pull_request&status=action_required",
+    "id": 36329404266,
+    "name": "ci",
+    "event": "pull_request",
+    "status": "completed",
+    "conclusion": "action_required",
+    "head_branch": "renovate/tap-reusable-workflows",
+    "head_sha": "a4ceda3dc195f2113e5033394b29ac2d70d5eab7",
+    "pull_requests": [],
+    "actor": {"login": "tap-renovate-remote", "id": 334543231, "type": "User"},
+    "triggering_actor": {"login": "tap-renovate-remote", "id": 334543231, "type": "User"},
+    "repository": {"id": 1000, "full_name": "unified-systems-com/tap-plugin-github-core"},
+    "head_repository": {
+      "id": 2000,
+      "full_name": "tap-renovate-remote/tap-plugin-github-core",
+      "fork": true,
+      "owner": {"login": "tap-renovate-remote", "id": 334543231, "type": "User"}
+    }
+  },
+  "head_repo": {
+    "description": "GET repositories/{run.head_repository.id}",
+    "id": 2000,
+    "full_name": "tap-renovate-remote/tap-plugin-github-core",
+    "fork": true,
+    "owner": {"login": "tap-renovate-remote", "id": 334543231, "type": "User"},
+    "parent": {"id": 1000, "full_name": "unified-systems-com/tap-plugin-github-core"}
+  },
+  "pulls": [
+    {
+      "description": "GET repos/{target}/pulls/{n} for each open PR from tap-renovate-remote:{run.head_branch}",
+      "number": 190,
+      "state": "open",
+      "changed_files": 3,
+      "user": {"login": "tap-renovate-remote", "id": 334543231, "type": "User"},
+      "head": {
+        "ref": "renovate/tap-reusable-workflows",
+        "sha": "a4ceda3dc195f2113e5033394b29ac2d70d5eab7",
+        "repo": {"id": 2000, "full_name": "tap-renovate-remote/tap-plugin-github-core"}
+      },
+      "base": {
+        "ref": "main",
+        "repo": {"id": 1000, "full_name": "unified-systems-com/tap-plugin-github-core"}
+      }
+    }
+  ],
+  "files": [
+    {"filename": ".github/workflows/ci.yml", "status": "modified"},
+    {"filename": ".github/workflows/nightly.yml", "status": "modified"},
+    {"filename": ".github/workflows/release-sbom.yml", "status": "modified"}
+  ]
+}
