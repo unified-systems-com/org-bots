@@ -27,6 +27,7 @@ comment, or run workflows against it.
 | `default.json5` | The shared repository preset (`local>unified-systems-com/org-bots:default.json5`), including tap's boot-record pin manager |
 | `.github/workflows/release-please.yml` | release-please over `RELEASE_REPOS`. Pilot: manual dispatch only; the hourly schedule returns when the pilot ends |
 | `release-please/package.json`, `package-lock.json` | Pin the release-please CLI and its whole dependency closure |
+| `.github/workflows/fleet-conformance.yml` | Nightly repository-scope conformance sweep (`validate_plugin --repo`) over every plugin repository in the org, discovered by name with tap's `tap.plugin_identity`. Read-only `GITHUB_TOKEN`; no App key, no `bots` environment; reports in the job summary and goes red on a failed check |
 | `.github/CODEOWNERS` | Every path needs the owner's review |
 
 ## Threat model
@@ -97,6 +98,7 @@ gh workflow run renovate.yml -R unified-systems-com/org-bots            # pilot:
 gh workflow run renovate.yml -R unified-systems-com/org-bots -f only=tap-plugin-gryphon-playground   # another single listed repo
 gh workflow run renovate.yml -R unified-systems-com/org-bots -f only=all  # every listed repository (an empty value falls back to the default)
 gh workflow run release-please.yml -R unified-systems-com/org-bots
+gh workflow run fleet-conformance.yml -R unified-systems-com/org-bots   # the conformance sweep, off-schedule
 gh run list -R unified-systems-com/org-bots --limit 5
 ```
 

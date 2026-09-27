@@ -1,0 +1,149 @@
+# Fleet conformance: every night, the repository-scope checks against every plugin repository in
+# the org. REPORTS, holds no credential, writes nothing.
+#
+# Why this exists. Core's central nightly sweep (tap's `nightly-plugins.yml`) was retired with the
+# union (tap#638, tap#847). It was the only thing that discovered plugin repositories on its own,
+# so since then a plugin repository with no nightly, or whose own CI never runs, goes red nowhere.
+# Each plugin's own CI now runs the same checks (tap's reusable `plugin-ci.yml`, `repo-scope` job),
+# but only once its pin reaches that job, and only when something triggers it. This sweep closes
+# both gaps on a clock: a new repository is in the next run with no config here.
+#
+# What it runs: ONLY `validate_plugin --repo` (req-tap-plugin-validate-repo) — CODEOWNERS, the
+# ci/nightly lanes, the pins on core's reusable workflows, the calling job's grant, the nightly's
+# shape, the waiver ledger. No boot, no tests, no plugin code executed: the checks parse the
+# repository's files. Not `--strict` (Q85b: a missing CODEOWNERS is a warning by policy). The
+# verdict is the `repo-*` checks only: `--repo` also runs the package's structure checks, which
+# each plugin's own CI owns, strict, against its harness.
+#
+# Discovery is tap's rule, not a copy of it: the classifier imports `tap.plugin_identity`
+# (`is_plugin_dist_name`, `slug_for_dist_name`) from tap `main`, the derivation the pre-boot
+# conformance gate uses, so both name shapes (`<slug>-tap`, legacy `tap-plugin-<slug>`) are found
+# and `tap` itself and look-alikes are refused (tap#309). Archived repositories are skipped.
+#
+# Credential: the workflow's own GITHUB_TOKEN, read-only. The org's plugin repositories and tap
+# are public; nothing here uses the `bots` environment or either App key.
+name: fleet-conformance
+
+on:
+  schedule:
+    # 10:41 UTC daily. Off the hour (GitHub delays and drops on-the-hour crons first), clear of
+    # Renovate's 07:15 and release-please's hourly :23 when their schedules return.
+    - cron: "41 10 * * *"
+  workflow_dispatch: {}
+
+permissions: {}
+
+concurrency:
+  group: fleet-conformance
+  cancel-in-progress: false
+
+jobs:
+  sweep:
+    name: repo-scope checks (every plugin repository)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read   # tap and the plugin repositories are public; nothing here writes
+    steps:
+      # The checker and the discovery rule are tap's, at `main`: the standard in force today.
+      # Fires on schedule and workflow_dispatch only, never on a pull request, so no foreign ref
+      # is checked out beside the token.
+      - name: Checkout tap (main)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          repository: unified-systems-com/tap
+          ref: main
+          persist-credentials: false
+          path: tap
+
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          enable-cache: false
+
+      # tap's locked `ci-tooling` group (jsonschema, packaging), plus `dev` for the one thing it
+      # does not carry yet: PyYAML. Without a YAML parser the pin and nightly-shape checks fall
+      # back to a line scan and FAIL as inconclusive (req-tap-plugin-validate-repo-6). Both are
+      # synced --frozen from tap's lockfile: pinned versions and hashes, nothing resolved here.
+      # Drop `--only-group dev` once tap's `ci-tooling` group carries PyYAML.
+      - name: Sync tap's locked tooling
+        run: uv sync --project tap --frozen --no-build --no-install-project --only-group ci-tooling --only-group dev
+
+      - name: Discover the plugin repositories
+        env:
+          GH_TOKEN: ${{ github.token }}
+          OWNER: ${{ github.repository_owner }}
+          PYTHONPATH: ${{ github.workspace }}/tap
+        run: |
+          set -euo pipefail
+          candidates=$(gh api "/orgs/$OWNER/repos" --paginate --jq '.[] | select(.archived | not) | .name' | sort)
+          printf '%s\n' "$candidates" | uv run --project tap --frozen --no-sync --no-build python -c '
+          import sys
+          from tap.plugin_identity import is_plugin_dist_name, slug_for_dist_name
+          for name in (line.strip() for line in sys.stdin):
+              if name and is_plugin_dist_name(name) and slug_for_dist_name(name):
+                  print(name)
+          ' > roster.txt
+          [ -s roster.txt ] || { echo "::error::discovery returned ZERO plugin repositories — that is a discovery failure, not an empty org"; exit 1; }
+          echo "Discovered $(wc -l < roster.txt) plugin repositories:"; cat roster.txt
+
+      # Each repository is cloned (depth 1, default branch, no credential) and parsed, never run.
+      # One repository failing does not stop the others; the run goes red at the end.
+      - name: Run the repository-scope checks
+        env:
+          OWNER: ${{ github.repository_owner }}
+          PYTHONPATH: ${{ github.workspace }}/tap
+        run: |
+          set -euo pipefail
+          mkdir -p fleet results
+          failed=()
+          broken=()
+          while read -r name; do
+            echo "::group::$name"
+            if ! git clone --quiet --depth 1 "https://github.com/$OWNER/$name.git" "fleet/$name"; then
+              echo "::error::$name: clone failed"; broken+=("$name"); echo "::endgroup::"; continue
+            fi
+            status=0
+            uv run --project tap --frozen --no-sync --no-build \
+              python -m tap_plugins.validate_plugin "fleet/$name" --repo --json > "results/$name.json" || status=$?
+            if [ "$status" -gt 1 ] || ! jq -e '[.checks[] | select(.id | startswith("repo-"))] | length > 0' "results/$name.json" > /dev/null; then
+              echo "::error::$name: the validator did not produce repo-* results (exit $status)"; broken+=("$name")
+              echo "::endgroup::"; continue
+            fi
+            jq -r '.checks[] | select(.id | startswith("repo-")) as $c
+              | "[\($c.status)] \($c.id)",
+                ($c.messages[] | select(.severity != "info") | "    \(.severity): \(.text)")' "results/$name.json"
+            if jq -e '[.checks[] | select((.id | startswith("repo-")) and .status == "fail")] | length > 0' "results/$name.json" > /dev/null; then
+              failed+=("$name")
+              echo "::error::$name: $(jq -r '[.checks[] | select((.id | startswith("repo-")) and .status == "fail") | .id] | join(", ")' "results/$name.json") failed"
+            fi
+            echo "::endgroup::"
+          done < roster.txt
+
+          # One row per repository, one column per repo-* check (the columns are whatever the
+          # checker ran, so a new check appears without a change here).
+          ids=$(jq -rs '[.[].checks[] | select(.id | startswith("repo-")) | .id] | unique | .[]' results/*.json)
+          {
+            echo "### Fleet conformance — repository-scope checks (tap \`$(git -C tap rev-parse --short HEAD)\`)"
+            echo
+            echo "$(wc -l < roster.txt | tr -d ' ') repositories: ${#failed[@]} failing, ${#broken[@]} not checked."
+            echo
+            printf '| repository | verdict |'; for id in $ids; do printf " \`%s\` |" "$id"; done; echo
+            printf '| --- | --- |'; for id in $ids; do printf ' --- |'; done; echo
+            while read -r name; do
+              f="results/$name.json"
+              if [ ! -s "$f" ] || ! jq -e '[.checks[] | select(.id | startswith("repo-"))] | length > 0' "$f" > /dev/null 2>&1; then
+                printf '| %s | NOT CHECKED |' "$name"; for id in $ids; do printf ' |'; done; echo; continue
+              fi
+              verdict=$(jq -r '[.checks[] | select(.id | startswith("repo-")) | .status] as $s
+                | if ($s | index("fail")) then "FAIL" elif ($s | index("warn")) then "warn" else "pass" end' "$f")
+              printf '| %s | %s |' "$name" "$verdict"
+              for id in $ids; do printf ' %s |' "$(jq -r --arg id "$id" '(.checks[] | select(.id == $id) | .status) // "—"' "$f")"; done
+              echo
+            done < roster.txt
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          if (( ${#failed[@]} + ${#broken[@]} )); then
+            echo "failing: ${failed[*]:-none}"
+            echo "not checked: ${broken[*]:-none}"
+            exit 1
+          fi
