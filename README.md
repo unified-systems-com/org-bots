@@ -159,10 +159,34 @@ when all of these hold, and otherwise it is left waiting with a one-line reason:
    branch, at the run's head sha, into the default branch;
 5. every changed file is on the script's `ALLOWED_PATHS`, none is removed, renamed or copied, no
    workflow file is added, and there are at most 50;
-6. the repository is listed in `renovate/global.js` (`FLEET` and `SELF_CONFIGURED`), which the
+6. every changed **line** has a shape the bots produce, read from the file's diff. A path on the
+   allowlist is not enough: without this, an added `run:` step or a `postinstall` script would
+   pass. Each change replaces one line with one line, and:
+
+   | Path | What may change |
+   | --- | --- |
+   | `.github/workflows/*.yml` / `*.yaml` | a `uses:` ref, to a 40-hex commit sha; the rest of the line identical except a version comment (`# v7`, `# main`) that may be added or rewritten |
+   | `**/*.boot.json` | the value of `"rev"` (a tag name) or `"commit"` (40 hex) |
+   | `**/tap-plugin.toml` | the value of `sha256` (64 hex); `plugin_version` in a release PR |
+   | `Dockerfile` (root) | the tag and digest of a `FROM` or `COPY --from=` image: same image, same stage, pinned by sha256 |
+   | `pyproject.toml` | a dependency's version specifier (same name, extras, marker); the project `version` in a release PR |
+   | `package.json` | a dependency's version, inside a dependency section the diff itself shows (never `scripts`) |
+   | `.env` | `TAP_VERSION=` in a release PR |
+   | `.release-please-manifest.json` | a value, to a version |
+   | `CHANGELOG.md` | lines only added, in one place at the top, in a release PR |
+
+   A **release PR** is recognised from the diff, never its title or branch: it changes
+   `.release-please-manifest.json` by version moves only, and the other release files must move
+   to a version the manifest names. `uv.lock`, `package-lock.json`, `renovate.json5` and
+   `release-please-config.json` are left for a human ("needs a human look"), as is any file whose
+   diff GitHub does not return (large or binary). So a tap release PR, which moves the project's
+   own version line in `uv.lock`, always waits for a human;
+7. the repository is listed in `renovate/global.js` (`FLEET` and `SELF_CONFIGURED`), which the
    script reads without executing it and refuses to run if it finds no repositories.
 
-Widening `ALLOWED_PATHS` or any other rule is the code owner's decision. The script uses only the
+The line shapes are those of the fleet's merged Renovate and release-please PRs; a shape not seen
+there is refused. Widening `ALLOWED_PATHS`, `CONTENT_RULES` or any other rule is the code owner's
+decision. The script uses only the
 Python standard library and your `gh` login; it calls `gh` with an argument list, never a shell.
 
 ## Adding a repository

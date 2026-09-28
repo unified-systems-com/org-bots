@@ -1,5 +1,5 @@
 {
-  "description": "One fork-bot Renovate run waiting for approval on tap-plugin-github-core, with everything the decision fetches. Field shapes follow GitHub's REST responses (runs list, repositories/{id}, pulls, pulls/{n}/files); values are made up. Tests mutate a copy.",
+  "description": "One fork-bot Renovate run waiting for approval on tap-plugin-github-core, with everything the decision fetches. Field shapes follow GitHub's REST responses (runs list, repositories/{id}, pulls, pulls/{n}/files). Ids and shas are made up; the files, with their patches, are the real ones of tap-plugin-github-core#190. Tests mutate a copy.",
   "target": "unified-systems-com/tap-plugin-github-core",
   "target_repo": {
     "description": "GET repos/{target}",
@@ -55,8 +55,8 @@
     }
   ],
   "files": [
-    {"filename": ".github/workflows/ci.yml", "status": "modified"},
-    {"filename": ".github/workflows/nightly.yml", "status": "modified"},
-    {"filename": ".github/workflows/release-sbom.yml", "status": "modified"}
+    {"filename": ".github/workflows/ci.yml", "status": "modified", "patch": "@@ -30,7 +30,7 @@ jobs:\n     permissions:\n       contents: read\n       security-events: write\n-    uses: unified-systems-com/tap/.github/workflows/plugin-ci.yml@1ffb2417032350ec1d31f0af400c25b225ee66ca\n+    uses: unified-systems-com/tap/.github/workflows/plugin-ci.yml@57505751b27900e5d58fc0c2b40df32f18a2b980\n     with:\n       plugin_slug: github_core\n     secrets:"},
+    {"filename": ".github/workflows/nightly.yml", "status": "modified", "patch": "@@ -20,7 +20,7 @@ permissions:\n   contents: read\n jobs:\n   nightly:\n-    uses: unified-systems-com/tap/.github/workflows/plugin-nightly.yml@1ffb2417032350ec1d31f0af400c25b225ee66ca\n+    uses: unified-systems-com/tap/.github/workflows/plugin-nightly.yml@57505751b27900e5d58fc0c2b40df32f18a2b980\n     # REQUIRED on this job. GitHub checks every job of a called workflow — and of the workflows\n     # IT calls — against this grant BEFORE starting anything, so a scope missing here fails the\n     # whole run at startup with zero jobs and no log. `security-events: write` is plugin-ci's"},
+    {"filename": ".github/workflows/release-sbom.yml", "status": "modified", "patch": "@@ -24,6 +24,6 @@ jobs:\n       contents: read\n       id-token: write\n       attestations: write\n-    uses: unified-systems-com/tap/.github/workflows/plugin-release-sbom.yml@1ffb2417032350ec1d31f0af400c25b225ee66ca # main\n+    uses: unified-systems-com/tap/.github/workflows/plugin-release-sbom.yml@57505751b27900e5d58fc0c2b40df32f18a2b980 # main\n     with:\n       plugin_slug: github_core"}
   ]
 }
