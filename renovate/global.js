@@ -116,6 +116,22 @@ if (ONLY && repositories.length !== 1) {
   throw new Error(`ORG_BOTS_ONLY=${ONLY} is not tap or a discovered repository`);
 }
 
+// The ramp. On 2026-09-28 the fork bot's first fleet-wide run opened about 50 PRs in 20
+// minutes, and GitHub's anti-abuse flagged the two-day-old account. So a fleet or all run
+// covers ONE slice of the list: ORG_BOTS_BATCH=<i>/<n> keeps every n-th repository starting
+// at the i-th (1-based), so n runs cover the whole list once. The workflow sets it (from the
+// UTC hour unless the dispatch names one); "all" or unset means no slicing, for a one-repo run.
+const BATCH = (process.env.ORG_BOTS_BATCH || "all").trim();
+let batched = repositories;
+if (!ONLY && BATCH !== "all") {
+  const m = /^([1-9][0-9]*)\/([1-9][0-9]*)$/.exec(BATCH);
+  if (!m || Number(m[1]) > Number(m[2])) {
+    throw new Error(`ORG_BOTS_BATCH=${BATCH} is not <i>/<n> with 1 <= i <= n`);
+  }
+  const [i, n] = [Number(m[1]), Number(m[2])];
+  batched = repositories.filter((_, k) => k % n === i - 1);
+}
+
 // The fork bot's identity, from the `bots` environment's VARIABLES (not secrets: neither
 // is sensitive). Set both when the account exists:
 //   FORK_BOT_LOGIN  the account's login
@@ -134,7 +150,7 @@ module.exports = {
   // Never enumerate what the token can see: the list above (tap plus discovery) is the only
   // thing that decides which repositories get PRs.
   autodiscover: false,
-  repositories,
+  repositories: batched,
 
   username: LOGIN,
   gitAuthor: `${LOGIN} <${ID}+${LOGIN}@users.noreply.github.com>`,

@@ -318,6 +318,22 @@ repository changes. Removing the topic, or archiving the repository, takes it ou
   above when the plugin has a CI record, and the next run picks it up. A repository that still runs its
   own `release-please.yml` is skipped with a warning until that workflow is retired.
 
+## The ramp
+
+On 2026-09-28 the fork bot's first fleet-wide runs opened about 50 PRs and renamed 22 forks in
+twenty minutes, and GitHub's anti-abuse flagged the two-day-old account: it and everything it
+created went invisible to everyone else. So both jobs pace themselves:
+
+- **Renovate** covers one slice of the fleet per run (`batch`, default `auto`: slice
+  `(UTC hour mod 8)+1` of 8, about three repositories). Eight runs cover the fleet once.
+  `batch=all` removes the slicing; don't, on a young account.
+- **release-please** opens at most `MAX_NEW_PRS` (3) new release PRs per run, sleeping
+  `PAUSE_SECONDS` (180) after each. Repositories past the cap are deferred to the next run with a
+  notice. Refreshing an existing release PR is not capped.
+
+After any bot run, check that one of its PRs resolves for someone other than the bot. A green
+run means only that the API calls succeeded.
+
 ## Running a job by hand
 
 ```sh
