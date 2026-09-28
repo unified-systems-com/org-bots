@@ -135,6 +135,15 @@ module.exports = {
   // PR-only: a human merges every update.
   automerge: false,
 
+  // postUpgradeTasks run a command inside the Renovate container, in the checkout of the
+  // repository being updated, while the container holds the bot token. Exactly one command is
+  // allowed: the boot-record digest refresh (renovate/preset.js, renovate/boot-records/), from
+  // the read-only mount the workflow adds. The pattern is anchored at both ends and takes no
+  // arguments, so a repository's own config cannot use it to run anything else. Commands run
+  // without a shell (allowShellExecutorForPostUpgradeCommands, stated here so it stays off).
+  allowedCommands: ["^python3 -I /github-action/boot-records/refresh\\.py$"],
+  allowShellExecutorForPostUpgradeCommands: false,
+
   // No dependency-dashboard issues anywhere, tap included. `force` wins over repository
   // config, so tap's own renovate.json5 cannot turn it back on. An outside account's
   // issue can also be refused (issues off, or interaction limits), so the run would not

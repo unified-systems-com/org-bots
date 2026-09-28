@@ -59,8 +59,10 @@ jobs:
           token: ${{ secrets.FORK_BOT_TOKEN }}
           configurationFile: renovate/global.js
           # The action mounts the configuration file alone, at /github-action/global.js.
-          # global.js requires ./preset.js, so mount that beside it, read-only.
-          docker-volumes: ${{ github.workspace }}/renovate/preset.js:/github-action/preset.js:ro
+          # global.js requires ./preset.js, so mount that beside it, read-only. The boot-record
+          # digest refresh that preset.js runs after a plugin-pin bump (the one command
+          # global.js allows) is mounted the same way. Mounts are separated by `;`.
+          docker-volumes: ${{ github.workspace }}/renovate/preset.js:/github-action/preset.js:ro;${{ github.workspace }}/renovate/boot-records:/github-action/boot-records:ro
           # The container receives the token, so pin its image by digest: a retag of `44`
           # cannot swap the code that holds it. Resolved from ghcr.io/renovatebot/renovate:44
           # on 2026-09-26 (Renovate 44.115.10).
