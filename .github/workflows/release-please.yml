@@ -1,7 +1,12 @@
 # Fleet release-please, stage 1 of 2: open or refresh each repository's rolling release PR, in
 # FORK MODE, as the fork bot (a machine user with no role on any org repository).
 #
-# Per repository in RELEASE_REPOS, this runs `release-please release-pr --fork`: the release
+# Which repositories: the same discovery Renovate uses (scripts/discover_fleet.py, the
+# `discover` job): every unified-systems-com repository carrying the `tap-plugin` topic
+# (owner-checked, archived ones dropped, org-bots refused), plus tap, which is named. The job
+# needs no secret; the org's repository list is public.
+#
+# Per discovered repository, this runs `release-please release-pr --fork`: the release
 # branch is pushed to the bot's fork, and the PR is opened from there, as an outside
 # contributor's would be. Nothing here can write to an org repository.
 #
@@ -21,8 +26,9 @@
 # `bots` environment (deploys from `main` only). The bot's login is the environment VARIABLE
 # `FORK_BOT_LOGIN`.
 #
-# Adding a repository: give it release-please-config.json and .release-please-manifest.json
-# first, then append its name to RELEASE_REPOS (comma-separated names in the org).
+# Adding a repository: the `tap-plugin` topic puts it in scope (new-plugin applies it). It is
+# released once it has release-please-config.json and .release-please-manifest.json at its
+# root; until then this job skips it with a notice (see "not configured" below).
 name: release-please
 
 on:
@@ -38,20 +44,34 @@ concurrency:
   group: release-please
   cancel-in-progress: false
 
-env:
-  # tap is listed, but this job skips it while tap still runs its own release-please.yml
-  # (the "own lane" check below). Moving tap here also needs its uv.lock refresh solved
-  # and its PR-check policy decided: README, "tap".
-  RELEASE_REPOS: tap-plugin-github-core,tap
-
 jobs:
+  discover:
+    name: discover (tap-plugin topic)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read   # check out this repository (the discovery script)
+    outputs:
+      fleet: ${{ steps.discover.outputs.fleet }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Discover the fleet
+        id: discover
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: python3 -I scripts/discover_fleet.py --github-output fleet
+
   release-please:
-    name: release-please (RELEASE_REPOS)
+    name: release-please (discovered repositories)
+    needs: discover
     runs-on: ubuntu-latest
     timeout-minutes: 15
     environment: bots
     permissions:
-      contents: read   # check out this private repository (the pinned CLI)
+      contents: read   # check out this repository (the pinned CLI)
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -68,6 +88,10 @@ jobs:
           RP_TOKEN: ${{ secrets.FORK_BOT_TOKEN }}
           GH_TOKEN: ${{ secrets.FORK_BOT_TOKEN }}
           BOT: ${{ vars.FORK_BOT_LOGIN }}
+          # tap is included and then skipped while it still runs its own release-please.yml
+          # (the "own lane" check below). Moving tap here also needs its uv.lock refresh
+          # solved and its PR-check policy decided: README, "tap".
+          FLEET_JSON: ${{ needs.discover.outputs.fleet }}
         run: |
           set -euo pipefail
           if [[ ! "$BOT" =~ ^[A-Za-z0-9][A-Za-z0-9-]{0,38}$ ]]; then
@@ -75,10 +99,34 @@ jobs:
             exit 1
           fi
           failed=()
-          IFS=',' read -r -a repos <<< "$RELEASE_REPOS"
+          mapfile -t repos < <(jq -r '(.fleet + .core)[]' <<< "$FLEET_JSON")
+          if (( ${#repos[@]} == 0 )); then
+            echo "::error::discovery produced no repositories"
+            exit 1
+          fi
           for name in "${repos[@]}"; do
+            # discover_fleet.py only emits plain names; checked again here before any use.
+            if [[ ! "$name" =~ ^[A-Za-z0-9._-]+$ || "$name" == "." || "$name" == ".." || "$name" == "org-bots" ]]; then
+              echo "::error::discovery produced an unusable repository name"
+              exit 1
+            fi
             repo="unified-systems-com/${name}"
             echo "::group::${repo}"
+
+            # Not configured: a discovered repository without release-please's two files at its
+            # root has nothing to release yet. Skipped with a notice, not a failure, so the
+            # topic can be applied before a repository adopts release-please.
+            if ! root=$(gh api "repos/${repo}/contents/" --jq '.[].name'); then
+              echo "::endgroup::"
+              echo "::error::could not list ${repo}'s root"
+              failed+=("$repo"); continue
+            fi
+            if ! grep -qxF 'release-please-config.json' <<< "$root" \
+               || ! grep -qxF '.release-please-manifest.json' <<< "$root"; then
+              echo "::endgroup::"
+              echo "::notice::${repo} has no release-please-config.json and .release-please-manifest.json; skipped"
+              continue
+            fi
 
             # Own lane: a repository that still runs its own release-please workflow has an
             # in-repo release PR already; a second one from the fork would compete with it.

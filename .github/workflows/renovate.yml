@@ -1,7 +1,15 @@
-# Fleet Renovate: dependency-update PRs across the repositories listed in renovate/global.js,
-# in FORK MODE, as the fork bot: a machine user with no role on any org repository.
+# Fleet Renovate: dependency-update PRs across tap and every unified-systems-com repository
+# carrying the `tap-plugin` topic, in FORK MODE, as the fork bot: a machine user with no role
+# on any org repository.
 #
-# Renovate forks each listed repository into the bot's account, pushes its update branches
+# Which repositories: the `discover` job runs scripts/discover_fleet.py, which lists the org's
+# repositories and keeps those carrying the topic (owner-checked, archived ones dropped,
+# org-bots refused). It needs no secret: the org's repository list is public, and the job holds
+# only its read-only GITHUB_TOKEN. Its answer reaches renovate/global.js as ORG_BOTS_FLEET; tap
+# is named in global.js itself. The `renovate` job, which holds the bot's token, starts only
+# after discovery has succeeded.
+#
+# Renovate forks each repository into the bot's account, pushes its update branches
 # to that fork, and opens the PR from the fork, exactly as an outside contributor would.
 # Nothing here can write to an org repository: the bot's writes reach only its own forks.
 # Every update is a PR that runs the target's own checks and is merged by a human.
@@ -23,7 +31,7 @@ on:
   workflow_dispatch:
     inputs:
       only:
-        description: "Run on this ONE listed repository (name, no owner), or \"all\" for every listed repository."
+        description: "Run on this ONE repository (name, no owner): tap or a discovered one. \"all\" for tap and every discovered repository."
         required: false
         default: "tap-plugin-github-core"
         type: string
@@ -41,13 +49,33 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  discover:
+    name: discover (tap-plugin topic)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read   # check out this repository (the discovery script)
+    outputs:
+      fleet: ${{ steps.discover.outputs.fleet }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Discover the fleet
+        id: discover
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: python3 -I scripts/discover_fleet.py --github-output fleet
+
   renovate:
     name: renovate (fleet)
+    needs: discover
     runs-on: ubuntu-latest
     timeout-minutes: 60
     environment: bots
     permissions:
-      contents: read   # check out this private repository (the global config)
+      contents: read   # check out this repository (the global config)
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -67,13 +95,15 @@ jobs:
           # cannot swap the code that holds it. Resolved from ghcr.io/renovatebot/renovate:44
           # on 2026-09-26 (Renovate 44.115.10).
           renovate-version: 44@sha256:e262ed52b23dd8c545c80faf5b1ad5c95a07b3f198888de8d7b8928f45c307c7
-          # global.js reads ORG_BOTS_ONLY (the pilot's one-repository narrowing) and the bot
-          # identity, so pass those into the container too. The rest is the action's default
+          # global.js reads ORG_BOTS_FLEET (the discovered repositories), ORG_BOTS_ONLY (the
+          # pilot's one-repository narrowing) and the bot identity, so pass those into the
+          # container too. The rest is the action's default
           # allow-list.
-          env-regex: "^(?:RENOVATE_\\w+|LOG_LEVEL|GITHUB_COM_TOKEN|NODE_OPTIONS|NO_COLOR|ORG_BOTS_ONLY|FORK_BOT_LOGIN|FORK_BOT_ID)$"
+          env-regex: "^(?:RENOVATE_\\w+|LOG_LEVEL|GITHUB_COM_TOKEN|NODE_OPTIONS|NO_COLOR|ORG_BOTS_FLEET|ORG_BOTS_ONLY|FORK_BOT_LOGIN|FORK_BOT_ID)$"
         env:
           RENOVATE_FORK_TOKEN: ${{ secrets.FORK_BOT_TOKEN }}
           FORK_BOT_LOGIN: ${{ vars.FORK_BOT_LOGIN }}
           FORK_BOT_ID: ${{ vars.FORK_BOT_ID }}
           LOG_LEVEL: ${{ inputs.logLevel || 'info' }}
+          ORG_BOTS_FLEET: ${{ needs.discover.outputs.fleet }}
           ORG_BOTS_ONLY: ${{ inputs.only }}

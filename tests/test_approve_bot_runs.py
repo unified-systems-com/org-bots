@@ -5,7 +5,9 @@
 
 from __future__ import annotations
 
+import contextlib
 import copy
+import io
 import json
 import sys
 import unittest
@@ -189,30 +191,91 @@ class ArgsTest(unittest.TestCase):
         self.assertTrue(abr.parse_args(["--yes"]).yes)
 
 
-class FleetParseTest(unittest.TestCase):
-    def test_real_global_js(self) -> None:
-        names = abr.parse_fleet((ROOT / "renovate" / "global.js").read_text())
-        self.assertIn("tap", names)
-        self.assertIn("tap-plugin-github-core", names)
-        self.assertGreater(len(names), 10)
+def org_repo(name: str, topics: tuple[str, ...] = ("tap-plugin",), owner: str = "unified-systems-com", **kw: Any) -> dict[str, Any]:
+    """One entry of `GET /orgs/{org}/repos`, in the fields discovery reads."""
+    return {"name": name, "full_name": f"{owner}/{name}", "owner": {"login": owner}, "topics": list(topics),
+            "archived": False, "disabled": False, **kw}
 
-    def test_commented_name_not_listed(self) -> None:
-        text = 'const SELF_CONFIGURED = [\n];\nconst FLEET = [\n  "a",\n  // "b",\n];\n'
-        self.assertEqual(abr.parse_fleet(text), ["a"])
+
+def pages(repos: list[dict[str, Any]]) -> Any:
+    """A get_page over a fake org repository list, split into PER_PAGE pages."""
+    per = abr.discover_fleet.PER_PAGE
+
+    def get_page(n: int) -> list[dict[str, Any]]:
+        return repos[(n - 1) * per : n * per]
+
+    return get_page
+
+
+class RunsOnly:
+    """The two calls main() makes itself: no run is waiting anywhere; approving is a test failure."""
+
+    def __init__(self) -> None:
+        self.listed: list[str] = []
+
+    def waiting_runs(self, full_name: str) -> list[dict[str, Any]]:
+        self.listed.append(full_name)
+        return []
+
+    def approve(self, full_name: str, run_id: int) -> None:
+        raise AssertionError("nothing may be approved")
+
+
+class FleetTest(unittest.TestCase):
+    """The target list comes from discovery (scripts/discover_fleet.py), never from a file."""
+
+    REPOS = [org_repo("a-tap"), org_repo("tap-plugin-b"), org_repo("untagged", topics=())]
+
+    def run_main(self, argv: list[str], repos: list[dict[str, Any]]) -> tuple[int, list[str]]:
+        api = RunsOnly()
+        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+            rc = abr.main(argv, get_page=pages(repos), api=api)
+        return rc, api.listed
+
+    def test_whole_fleet_is_discovered_plus_tap(self) -> None:
+        rc, listed = self.run_main([], self.REPOS)
+        self.assertEqual(rc, 0)
+        self.assertEqual(listed, ["unified-systems-com/a-tap", "unified-systems-com/tap-plugin-b", "unified-systems-com/tap"])
+
+    def test_repo_in_fleet(self) -> None:
+        self.assertEqual(self.run_main(["--repo", "a-tap"], self.REPOS), (0, ["unified-systems-com/a-tap"]))
+        self.assertEqual(self.run_main(["--repo", "unified-systems-com/tap"], self.REPOS), (0, ["unified-systems-com/tap"]))
+
+    def test_repo_without_topic_refused(self) -> None:
+        self.assertEqual(self.run_main(["--repo", "untagged"], self.REPOS), (2, []))
+
+    def test_repo_org_bots_refused(self) -> None:
+        self.assertEqual(self.run_main(["--repo", "org-bots"], self.REPOS), (2, []))
+
+    def test_repo_foreign_owner_refused(self) -> None:
+        repos = [*self.REPOS, org_repo("evil-tap", owner="someone-else")]
+        self.assertEqual(self.run_main(["--repo", "evil-tap"], repos), (2, []))
+        self.assertEqual(self.run_main(["--repo", "someone-else/evil-tap"], repos), (2, []))
+
+    def test_org_bots_tagged_stops_everything(self) -> None:
+        self.assertEqual(self.run_main([], [*self.REPOS, org_repo("org-bots")]), (2, []))
 
     def test_zero_repos_fails(self) -> None:
-        text = "const SELF_CONFIGURED = [\n  { repository: `${ORG}/tap` },\n];\nconst FLEET = [\n  // none\n];\n"
-        with self.assertRaisesRegex(abr.FleetParseError, "zero"):
-            abr.parse_fleet(text)
+        self.assertEqual(self.run_main([], [org_repo("untagged", topics=())]), (2, []))
 
-    def test_missing_block_fails(self) -> None:
-        with self.assertRaises(abr.FleetParseError):
-            abr.parse_fleet("module.exports = {};\n")
+    def test_archived_not_in_fleet(self) -> None:
+        repos = [*self.REPOS, org_repo("old-tap", archived=True)]
+        self.assertEqual(self.run_main(["--repo", "old-tap"], repos), (2, []))
 
-    def test_unsafe_name_fails(self) -> None:
-        text = 'const SELF_CONFIGURED = [\n];\nconst FLEET = [\n  "a/../b",\n];\n'
-        with self.assertRaises(abr.FleetParseError):
-            abr.parse_fleet(text)
+    def test_listing_error_fails(self) -> None:
+        def broken(n: int) -> Any:
+            raise abr.discover_fleet.DiscoveryError("boom")
+
+        api = RunsOnly()
+        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+            self.assertEqual(abr.main([], get_page=broken, api=api), 2)
+        self.assertEqual(api.listed, [])
+
+    def test_select_targets(self) -> None:
+        fleet = ["a", "tap"]
+        self.assertEqual(abr.select_targets(fleet, []), fleet)
+        self.assertEqual(abr.select_targets(fleet, ["a", "a"]), ["a"])
+        self.assertIsInstance(abr.select_targets(fleet, ["a", "b"]), str)
 
 
 OLD_SHA = "1ffb2417032350ec1d31f0af400c25b225ee66ca"

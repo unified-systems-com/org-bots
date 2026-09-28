@@ -67,7 +67,10 @@ A run is approved only if ALL of these hold:
      diff does not show, is refused. Commits pinned to a release tag are held to the same rule:
      every release tag in the fleet was on its default branch when this was written
      (2026-09-27). Shas in third-party repositories (any other owner) are out of scope here;
-  8. the target repository is listed in renovate/global.js (FLEET, plus SELF_CONFIGURED).
+  8. the target repository is in the fleet, as scripts/discover_fleet.py finds it when this
+     script starts: tap, plus every unified-systems-com repository carrying the `tap-plugin`
+     topic (owner-checked, archived and disabled ones dropped). org-bots is never in it; if it
+     carries the topic, discovery fails and nothing is approved.
 
 Widening ALLOWED_PATHS or CONTENT_RULES, or any other rule here, is the maintainer's decision.
 
@@ -85,6 +88,9 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Protocol
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import discover_fleet  # noqa: E402  (this directory; stdlib only)
 
 ORG = "unified-systems-com"
 
@@ -125,34 +131,20 @@ PER_PAGE = 100
 
 
 # --------------------------------------------------------------------------------------------
-# The fleet list, parsed from renovate/global.js without executing it.
+# The fleet: scripts/discover_fleet.py, the same discovery Renovate and release-please use.
 
 
-class FleetParseError(Exception):
-    pass
+def fleet_names(get_page: Any) -> list[str]:
+    """Every repository in scope (discovered, then tap). Raises discover_fleet.DiscoveryError."""
+    return discover_fleet.discover(get_page).names()
 
 
-def _array_block(text: str, const: str) -> str:
-    m = re.search(r"^const " + re.escape(const) + r" = \[(.*?)^\];", text, re.S | re.M)
-    if not m:
-        raise FleetParseError(f"renovate/global.js: no `const {const} = [ ... ];` block")
-    # Drop // comments so a commented-out name is not read as listed.
-    return re.sub(r"//[^\n]*", "", m.group(1))
-
-
-def parse_fleet(text: str) -> list[str]:
-    """Return the repository names listed in renovate/global.js: FLEET, then SELF_CONFIGURED."""
-    fleet = re.findall(r'"([^"\n]*)"', _array_block(text, "FLEET"))
-    self_conf = re.findall(r"repository:\s*`\$\{ORG\}/([^`\n]*)`", _array_block(text, "SELF_CONFIGURED"))
-    if not fleet:
-        raise FleetParseError("renovate/global.js: parsed zero repositories from FLEET")
-    names = []
-    for n in fleet + self_conf:
-        if not NAME_RE.match(n):
-            raise FleetParseError(f"renovate/global.js: not a repository name: {n!r}")
-        if n not in names:
-            names.append(n)
-    return names
+def org_repos_page(page: int) -> Any:
+    """One page of `GET /orgs/{ORG}/repos`, through the caller's `gh` login."""
+    try:
+        return gh_get(f"orgs/{ORG}/repos", type="all", sort="full_name", per_page=str(discover_fleet.PER_PAGE), page=str(int(page)))
+    except GhError as e:
+        raise discover_fleet.DiscoveryError(str(e)) from e
 
 
 # --------------------------------------------------------------------------------------------
@@ -684,7 +676,7 @@ def check_content(files: list[dict[str, Any]]) -> str | None:
 # default branch. zizmor's `impostor-commit` audit (after Chainguard's clank) accepts a sha on
 # ANY branch or tag, using the same compare API; this is stricter, default branch only, because
 # every release tag in the fleet was on its default branch (checked with this compare call for
-# all 94 tags of the 25 listed repositories on 2026-09-27; the one exception, tap's
+# all 94 tags of the 25 repositories then in the fleet on 2026-09-27; the one exception, tap's
 # `park/steampipe-tooling`, is not a release tag). Shas of third-party actions and records
 # (any other owner) are not checked here.
 
@@ -945,7 +937,7 @@ def printable(s: Any, width: int = 40) -> str:
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
-    ap.add_argument("--repo", action="append", default=[], help="a listed repository name (repeatable); default: all listed")
+    ap.add_argument("--repo", action="append", default=[], help="a fleet repository name (repeatable); default: the whole fleet")
     mode = ap.add_mutually_exclusive_group()
     mode.add_argument("--dry-run", dest="yes", action="store_false", help="print what would be approved (default)")
     mode.add_argument("--yes", dest="yes", action="store_true", help="approve the runs that pass every check")
@@ -954,25 +946,32 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     return ap.parse_args(argv)
 
 
-def main(argv: list[str] | None = None) -> int:
+def select_targets(fleet: list[str], requested: list[str]) -> list[str] | str:
+    """The repositories to check: the whole fleet, or the requested ones if every one is in it.
+    A name outside the fleet is an error message, never a way to reach another repository."""
+    if not requested:
+        return fleet
+    names = [r.removeprefix(f"{ORG}/") for r in requested]
+    unknown = [n for n in names if n not in fleet]
+    if unknown:
+        return f"not in the fleet (tap, or a {ORG} repository carrying the {discover_fleet.TOPIC} topic): {', '.join(printable(n) for n in unknown)}"
+    return list(dict.fromkeys(names))
+
+
+def main(argv: list[str] | None = None, get_page: Any = None, api: Any = None) -> int:
     args = parse_args(argv)
 
-    global_js = Path(__file__).resolve().parent.parent / "renovate" / "global.js"
     try:
-        fleet = parse_fleet(global_js.read_text())
-    except (OSError, FleetParseError) as e:
-        print(f"error: {e}", file=sys.stderr)
+        fleet = fleet_names(get_page or org_repos_page)
+    except discover_fleet.DiscoveryError as e:
+        print(f"error: fleet discovery: {e}", file=sys.stderr)
         return 2
-    targets = fleet
-    if args.repo:
-        names = [r.removeprefix(f"{ORG}/") for r in args.repo]
-        unknown = [n for n in names if n not in fleet]
-        if unknown:
-            print(f"error: not listed in renovate/global.js: {', '.join(unknown)}", file=sys.stderr)
-            return 2
-        targets = names
+    targets = select_targets(fleet, args.repo)
+    if isinstance(targets, str):
+        print(f"error: {targets}", file=sys.stderr)
+        return 2
 
-    api = GhApi()
+    api = api or GhApi()
     print(f"== {len(targets)} repositories, {'APPROVING' if args.yes else 'dry run'}")
     rows: list[tuple[str, str, str, str, str]] = []
     errors = 0
@@ -1010,7 +1009,7 @@ def main(argv: list[str] | None = None) -> int:
 
     print()
     if not rows:
-        print("No runs waiting for approval in the listed repositories.")
+        print("No runs waiting for approval in the fleet.")
     else:
         head = ("repository", "run", "PR", "verdict", "reason")
         widths = [max(len(head[i]), *(len(r[i]) for r in rows)) for i in range(4)]
