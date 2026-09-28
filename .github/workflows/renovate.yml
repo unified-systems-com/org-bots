@@ -36,7 +36,7 @@ on:
         default: "fleet"
         type: string
       batch:
-        description: "Fleet slice for a fleet/all run: <i>/<n> (every n-th repository from the i-th), \"auto\" (slice (UTC hour mod 8)+1 of 8), or \"all\" (no slicing; the burst that got the bot flagged)"
+        description: "Fleet slice for a fleet/all run: <i>/<n> (every n-th repository from the i-th), \"auto\" (slice (run number mod 8)+1 of 8, so consecutive runs rotate on any schedule), or \"all\" (no slicing; the burst that got the bot flagged)"
         required: false
         default: "auto"
         type: string
@@ -90,12 +90,16 @@ jobs:
         id: batch
         env:
           BATCH_INPUT: ${{ inputs.batch || 'auto' }}
+          RUN_NUMBER: ${{ github.run_number }}
         run: |
           set -euo pipefail
           # 8 slices of about 3 repositories: at most ~6 PRs per run under preset.js's
           # prHourlyLimit of 2 per repository, instead of the whole fleet at once.
           if [[ "$BATCH_INPUT" == "auto" ]]; then
-            batch="$(( $(date -u +%-H) % 8 + 1 ))/8"
+            # The run number, not the clock: a daily schedule fires at one fixed hour, so an
+            # hour-based slice would repeat the same third of the fleet forever. The run
+            # number advances by one on every run, so eight consecutive runs cover it once.
+            batch="$(( RUN_NUMBER % 8 + 1 ))/8"
           elif [[ "$BATCH_INPUT" == "all" || "$BATCH_INPUT" =~ ^[1-9][0-9]*/[1-9][0-9]*$ ]]; then
             batch="$BATCH_INPUT"
           else

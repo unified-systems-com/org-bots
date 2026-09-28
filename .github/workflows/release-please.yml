@@ -248,10 +248,12 @@ jobs:
               echo "::endgroup::"
               continue   # no release pending
             fi
-            opened_new=false
             if [[ "$had_pr" == "0" ]]; then
-              opened_new=true
+              # A new release PR exists from here on, whatever happens to its digest refresh
+              # below, so count it and pause now: every later exit from this iteration is
+              # then already paced.
               new_prs=$((new_prs + 1))
+              sleep "$PAUSE_SECONDS"
             fi
             if [[ ! "$branch" =~ ^release-please--[A-Za-z0-9._/-]+$ || "$branch" == *..* ]]; then
               echo "::endgroup::"
@@ -279,7 +281,6 @@ jobs:
             if [[ -z "$changed" ]]; then
               echo "boot-record digests already current"
               echo "::endgroup::"
-              if [[ "$opened_new" == true ]]; then sleep "$PAUSE_SECONDS"; fi
               continue
             fi
             # Only the digest files may be committed: a modified `tap_plugin/<slug>/tap-plugin.toml`,
@@ -303,7 +304,6 @@ jobs:
             fi
             echo "pushed the boot-record digest refresh to ${BOT}/${name}:${branch}"
             echo "::endgroup::"
-            if [[ "$opened_new" == true ]]; then sleep "$PAUSE_SECONDS"; fi
           done
           # One repository failing does not stop the others; the run still goes red.
           if (( ${#failed[@]} )); then
