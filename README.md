@@ -18,16 +18,43 @@ comment, or run workflows against it.
 | Path | What it is |
 | --- | --- |
 | `.github/workflows/renovate.yml` | Renovate in fork mode. Pilot: manual dispatch only, one repository per run (`only`, default `tap-plugin-github-core`); the daily schedule returns when the pilot ends |
-| `renovate/global.js` | Renovate's global config: the explicit repository list, the bot identity (from environment variables), PR limits, fork mode, no onboarding, no dashboard |
-| `renovate/preset.js` | The shared repository config every listed repository without its own gets, including tap's boot-record pin manager |
+| `renovate/global.js` | Renovate's global config: tap (named) plus the discovered repositories, the bot identity (from environment variables), PR limits, fork mode, no onboarding, no dashboard |
+| `renovate/preset.js` | The shared repository config every discovered repository gets, including tap's boot-record pin manager |
 | `renovate/boot-records/` | The digest refresh Renovate runs after bumping an in-package boot record: `refresh.py`, tap's `tap.boot_records` vendored at a pinned commit (`tap/`, `tap-vendor.json`), `vendor.py` to check or move the pin, and its offline tests |
-| `.github/workflows/release-please.yml` | release-please stage 1 (`release-pr --fork`) over `RELEASE_REPOS`. Pilot: manual dispatch only |
+| `.github/workflows/release-please.yml` | release-please stage 1 (`release-pr --fork`) over the discovered repositories plus tap. Pilot: manual dispatch only |
+| `scripts/discover_fleet.py` | Which repositories both bots and `approve_bot_runs.py` act on: see [The fleet](#the-fleet) |
 | `scripts/cut-release.sh` | release-please stage 2 (`github-release`), run by the maintainer. Dry run by default |
 | `scripts/approve_bot_runs.py` | Approves the fork bot's PR workflow runs that wait for "Approve and run", by fixed rules. Dry run by default |
-| `tests/` | Offline tests for `approve_bot_runs.py` (fixture JSON, no network): `python3 -m unittest discover -s tests` |
+| `tests/` | Offline tests for `approve_bot_runs.py`, `discover_fleet.py` and `renovate/global.js` (fixture JSON, no network; the `global.js` tests need `node` and are skipped without it): `python3 -m unittest discover -s tests` |
 | `renovate/boot-records/test_refresh.py` | Offline tests for the digest refresh and the vendored pin: `python3 -m unittest discover -s renovate/boot-records` (Python 3.11 or later, for `tomllib`) |
 | `release-please/package.json`, `package-lock.json` | Pin the release-please CLI and its whole dependency closure, for CI and for the script |
 | `.github/CODEOWNERS` | Every path needs the owner's review |
+
+## The fleet
+
+Both bots, and `scripts/approve_bot_runs.py`, act on the same set of repositories, and no file
+lists them. `scripts/discover_fleet.py` finds them each time:
+
+- every repository in `GET /orgs/unified-systems-com/repos` whose owner is `unified-systems-com`
+  (checked per entry: a topic is a global string, so the owner is checked, not assumed from the
+  URL), that carries the `tap-plugin` topic, and is neither archived nor disabled;
+- plus `tap`, which is named rather than discovered (it is the host, and has its own Renovate
+  config), whether or not it carries the topic.
+
+It refuses to answer (and the run stops) when no repository carries the topic, when a tagged
+repository's name is not a plain name, or when `org-bots` itself carries the topic. The org's
+repository list is public, so the workflows' `discover` job holds only its read-only
+`GITHUB_TOKEN`, and runs before, and apart from, the job that holds the bot's token.
+
+```sh
+scripts/discover_fleet.py        # prints {"core": ["tap"], "fleet": [...]}; the list goes to stderr
+```
+
+Renovate's own `autodiscover`/`autodiscoverTopics` cannot do this here: on GitHub, Renovate
+autodiscovers from `GET /user/repos`, which lists the repositories the token's user owns or holds
+a role on. The fork bot holds no role on any org repository, so that list is its own forks, which
+carry no topics. The search API is not used either: its index lagged the topic by minutes when it
+was first applied.
 
 ## How fork mode works
 
@@ -146,7 +173,7 @@ writes it to disk and never prints it.
 ## Approving the bot's runs
 
 ```sh
-scripts/approve_bot_runs.py                 # dry run over every repository in renovate/global.js
+scripts/approve_bot_runs.py                 # dry run over the whole fleet (see The fleet)
 scripts/approve_bot_runs.py --repo zizmor-tap
 scripts/approve_bot_runs.py --yes           # approve what passed, with your gh login
 ```
@@ -199,13 +226,15 @@ when all of these hold, and otherwise it is left waiting with a one-line reason:
    `identical`; `behind`, `diverged`, a 404, any API error, or a boot `commit` whose `url` the
    diff does not show, leaves the run waiting. zizmor's `impostor-commit` audit accepts a sha on
    any branch or tag; this is stricter (default branch only) because every release tag in the
-   fleet is on its default branch: all 94 tags of the 25 listed repositories were checked with
+   fleet is on its default branch: all 94 tags of the 25 repositories then in the fleet were checked with
    the same compare call on 2026-09-27, and the only one off `main` was tap's
    `park/steampipe-tooling`, not a release. A boot record pinned to a tag's commit is therefore
    held to the same rule. Shas of third-party actions and records (any other owner) are not
    checked here;
-8. the repository is listed in `renovate/global.js` (`FLEET` and `SELF_CONFIGURED`), which the
-   script reads without executing it and refuses to run if it finds no repositories.
+8. the repository is in the fleet, as `scripts/discover_fleet.py` finds it when the script
+   starts: tap, plus the `unified-systems-com` repositories carrying the `tap-plugin` topic. A
+   `--repo` outside it is refused, and a discovery failure (no repository, `org-bots` tagged, an
+   API error) stops the script before it checks anything.
 
 The line shapes are those of the fleet's merged Renovate and release-please PRs; a shape not seen
 there is refused. Widening `ALLOWED_PATHS`, `CONTENT_RULES` or any other rule is the code owner's
@@ -256,20 +285,24 @@ carry no digest, and tap has its own renovate config, so none of this applies to
 
 ## Adding a repository
 
-- **Renovate:** add the repository name to `FLEET` in `renovate/global.js`. It gets
-  `renovate/preset.js` unless it carries a renovate config of its own; then list it the way `tap`
-  is listed.
-- **release-please:** first give the repository its own `release-please-config.json` and
-  `.release-please-manifest.json`, the way tap-plugin-github-core has them. Then append its name
-  to `RELEASE_REPOS` in `release-please.yml`. A repository that still runs its own
-  `release-please.yml` is skipped with a warning until that workflow is retired.
+Give the repository the `tap-plugin` topic (`gh repo edit unified-systems-com/<name>
+--add-topic tap-plugin`; `new-plugin` applies it to a repository it creates). Nothing in this
+repository changes. Removing the topic, or archiving the repository, takes it out.
+
+- **Renovate:** it gets `renovate/preset.js`. A repository with a renovate config of its own
+  would get both, so name it in `SELF_CONFIGURED` in `renovate/global.js` the way `tap` is named;
+  a named entry wins over discovery. (No discovered repository has its own config today.)
+- **release-please:** a discovered repository without `release-please-config.json` and
+  `.release-please-manifest.json` at its root is skipped with a notice; add them, the way
+  tap-plugin-github-core has them, and the next run picks it up. A repository that still runs its
+  own `release-please.yml` is skipped with a warning until that workflow is retired.
 
 ## Running a job by hand
 
 ```sh
 gh workflow run renovate.yml -R unified-systems-com/org-bots            # pilot: github-core only; add -f logLevel=debug to troubleshoot
-gh workflow run renovate.yml -R unified-systems-com/org-bots -f only=tap-plugin-gryphon-playground   # another single listed repo
-gh workflow run renovate.yml -R unified-systems-com/org-bots -f only=all  # every listed repository (an empty value falls back to the default)
+gh workflow run renovate.yml -R unified-systems-com/org-bots -f only=tap-plugin-gryphon-playground   # another single fleet repo (must be discovered, or tap)
+gh workflow run renovate.yml -R unified-systems-com/org-bots -f only=all  # tap and every discovered repository (an empty value falls back to the default)
 gh workflow run release-please.yml -R unified-systems-com/org-bots
 gh run list -R unified-systems-com/org-bots --limit 5
 ```
@@ -297,7 +330,7 @@ held elsewhere: revoke it in the App's settings as well.
 
 ## tap
 
-tap is in both lists, for the same coverage as every other repository. Three things stand between
+tap is in scope for both bots, named rather than discovered, for the same coverage as every other repository. Three things stand between
 it and a working fork-mode run.
 
 ### Open decision: tap's PR checks and a user-account bot

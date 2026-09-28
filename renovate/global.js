@@ -1,10 +1,11 @@
 // Renovate GLOBAL (self-hosted) configuration for the unified-systems-com fleet.
 //
 // This file is read by .github/workflows/renovate.yml. It says WHICH repositories the fork
-// bot works on and the bot-wide rules. It does not say how each repository's dependencies
+// bot works on (tap, named below, plus the repositories topic discovery found) and the
+// bot-wide rules. It does not say how each repository's dependencies
 // are grouped or labelled: that is repository config, which comes from
 //   - the repository's own renovate.json5, when it has one (today only tap does), or
-//   - renovate/preset.js in this repo, which every other listed repository gets below.
+//   - renovate/preset.js in this repo, which every discovered repository gets below.
 //
 // Fork mode: Renovate runs as a machine user that has no role on any org repository. It
 // forks each repository into its own account, pushes update branches there, and opens PRs
@@ -40,40 +41,50 @@ const SELF_CONFIGURED = [
   },
 ];
 
-// Plugin repositories, then the two products. Chosen from `gh repo list unified-systems-com`
-// on 2026-09-26. Deliberately absent: git-serious.com (the website), .github (org community
-// files), git-serious-fixtures (known-answer fixtures: an "update" would falsify them),
-// tap-dev-hooks and tap-build-dependencies (supply-chain surfaces that pin by hand),
-// unified-ai-review and unified-ai-review-prompts (not TAP plugins), the archived
-// tap-plugin-aws-secrets-source, and this repository.
-const FLEET = [
-  // plugins
-  "tap-plugin-administrivia",
-  "tap-plugin-aws-core",
-  "tap-plugin-compliance-core",
-  "tap-plugin-computing-core",
-  "tap-plugin-fedramp-20x-ksi",
-  "tap-plugin-github-core",
-  "tap-plugin-grid-fixtures",
-  "tap-plugin-gryphon-playground",
-  "tap-plugin-identity-core",
-  "tap-plugin-roscale",
-  "tap-plugin-sigstore-core",
-  "dcom-tap",
-  "deployment-environment-tap",
-  "duo-tap",
-  "git-core-tap",
-  "git-serious-double-tap",
-  "gitlab-tap",
-  "gruntwork-tap",
-  "okta-tap",
-  "project-management-core-tap",
-  "teleport-tap",
-  "zizmor-tap",
-  // products
-  "git-serious-tap",
-  "tap-plugin-samsite",
-];
+// Every other repository comes from topic discovery, never from a list here:
+// scripts/discover_fleet.py lists the unified-systems-com repositories carrying the
+// `tap-plugin` topic (owner-checked, archived and disabled ones dropped, org-bots refused) in a
+// separate workflow job, and passes the result in as ORG_BOTS_FLEET, the JSON object
+// {"core": [...], "fleet": [...]}. Only `fleet` is read here; tap stays named above whether or
+// not it carries the topic. A repository joins by carrying the topic (new-plugin applies it)
+// and leaves by losing it or being archived.
+//
+// Renovate's own autodiscover cannot do this: on GitHub it lists `GET /user/repos`, the
+// repositories the token's user owns or has a role on. The fork bot has no role anywhere, so
+// that is only its own forks, which carry no topics. See scripts/discover_fleet.py.
+const NAME = /^[A-Za-z0-9._-]+$/;
+// The repository that runs this automation is never a target, whatever its topics say.
+const REFUSED = new Set(["org-bots"]);
+// A named repository keeps its named entry: if discovery also finds it, the named entry wins
+// and the shared preset is not applied on top of it.
+const NAMED = new Set(SELF_CONFIGURED.map((r) => r.repository));
+
+function discoveredFleet(raw) {
+  let parsed;
+  try {
+    parsed = JSON.parse(raw || "");
+  } catch {
+    throw new Error("ORG_BOTS_FLEET must be the JSON that scripts/discover_fleet.py prints");
+  }
+  const fleet = parsed && Array.isArray(parsed.fleet) ? parsed.fleet : null;
+  if (!fleet || fleet.length === 0) {
+    throw new Error("ORG_BOTS_FLEET lists no repositories; discovery must find at least one");
+  }
+  for (const name of fleet) {
+    if (typeof name !== "string" || !NAME.test(name) || name === "." || name === "..") {
+      throw new Error(`ORG_BOTS_FLEET: not a repository name: ${JSON.stringify(name).slice(0, 80)}`);
+    }
+    if (REFUSED.has(name)) {
+      throw new Error(`ORG_BOTS_FLEET: ${name} is never a discovered repository`);
+    }
+  }
+  if (new Set(fleet).size !== fleet.length) {
+    throw new Error("ORG_BOTS_FLEET lists a repository twice");
+  }
+  return fleet.filter((name) => !NAMED.has(`${ORG}/${name}`));
+}
+
+const FLEET = discoveredFleet(process.env.ORG_BOTS_FLEET);
 
 const ALL = [
   ...SELF_CONFIGURED,
@@ -84,16 +95,17 @@ const ALL = [
 ];
 
 // Pilot: ORG_BOTS_ONLY=<repository name> narrows a run to ONE repository from the list
-// above. The token is a user token, so it is not scoped per repository: this list, and
-// autodiscover off, are what decide which repositories get PRs. A name
-// that is not in the list is an error, never a way to reach an unlisted repository.
+// above: tap, or a discovered repository. The token is a user token, so it is not scoped per
+// repository: discovery, and autodiscover off, are what decide which repositories get PRs.
+// A name that is not in the list is an error, never a way to reach a repository discovery
+// did not find (owner unified-systems-com AND the `tap-plugin` topic).
 // "all" (or nothing) means every listed repository. A workflow_dispatch string input that
 // is left empty is replaced by its default, so an empty value cannot be used to ask for "all".
 const RAW = (process.env.ORG_BOTS_ONLY || "").trim();
 const ONLY = RAW === "all" ? "" : RAW;
 const repositories = ONLY ? ALL.filter((r) => r.repository === `${ORG}/${ONLY}`) : ALL;
 if (ONLY && repositories.length !== 1) {
-  throw new Error(`ORG_BOTS_ONLY=${ONLY} is not one of the listed repositories`);
+  throw new Error(`ORG_BOTS_ONLY=${ONLY} is not tap or a discovered repository`);
 }
 
 // The fork bot's identity, from the `bots` environment's VARIABLES (not secrets: neither
@@ -111,8 +123,8 @@ if (!/^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$/.test(LOGIN) || !/^[1-9][0-9]*$/.test(
 
 module.exports = {
   platform: "github",
-  // Never enumerate what the token can see: this list is the only thing that decides which
-  // repositories get PRs.
+  // Never enumerate what the token can see: the list above (tap plus discovery) is the only
+  // thing that decides which repositories get PRs.
   autodiscover: false,
   repositories,
 
