@@ -1,4 +1,8 @@
 # Every file here decides what the org's two write-capable bots do, so every change needs
 # the owner's review. The org-require-pr ruleset makes code-owner review a merge condition.
-# GitHub silently ignores an owner it cannot resolve: keep this handle valid.
-* @notgeorge
+# GitHub silently ignores an owner it cannot resolve: keep these handles valid.
+# @criticalsec is the reviewer. The maintainer's automation acts as @notgeorge, so an
+# approval from criticalsec is what makes a notgeorge-authored change two-person. The org
+# ruleset for this repository requires one approval plus code-owner review. criticalsec
+# resolves once it has write access (outside collaborator, after the repository goes public).
+* @notgeorge @criticalsec
