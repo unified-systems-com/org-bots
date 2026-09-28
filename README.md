@@ -158,30 +158,49 @@ when all of these hold, and otherwise it is left waiting with a one-line reason:
 4. exactly one open PR matches it, authored by the bot (by id, type `User`), from that fork and
    branch, at the run's head sha, into the default branch;
 5. every changed file is on the script's `ALLOWED_PATHS`, none is removed, renamed or copied, no
-   workflow file is added, and there are at most 50;
+   workflow file or composite action (`.github/actions/*/action.yml`) is added, and there are at
+   most 50;
 6. every changed **line** has a shape the bots produce, read from the file's diff. A path on the
    allowlist is not enough: without this, an added `run:` step or a `postinstall` script would
    pass. Each change replaces one line with one line, and:
 
    | Path | What may change |
    | --- | --- |
-   | `.github/workflows/*.yml` / `*.yaml` | a `uses:` ref, to a 40-hex commit sha; the rest of the line identical except a version comment (`# v7`, `# main`) that may be added or rewritten |
+   | `.github/workflows/*.yml` / `*.yaml`, `.github/actions/*/action.yml` | a `uses:` ref, to a 40-hex commit sha; the rest of the line identical except a version comment (`# v7`, `# main`) that may be added or rewritten |
    | `**/*.boot.json` | the value of `"rev"` (a tag name) or `"commit"` (40 hex) |
-   | `**/tap-plugin.toml` | the value of `sha256` (64 hex); `plugin_version` in a release PR |
-   | `Dockerfile` (root) | the tag and digest of a `FROM` or `COPY --from=` image: same image, same stage, pinned by sha256 |
+   | `**/tap-plugin.toml` | the value of `sha256` (64 hex), only when the same PR also changes a `*.boot.json` in the same `tap_plugin/<slug>/` package; `plugin_version` in a release PR |
+   | `Dockerfile` (root), `docker/postgres/Dockerfile` | the tag and digest of a `FROM` or `COPY --from=` image: same image, same stage, pinned by sha256 |
    | `pyproject.toml` | a dependency's version specifier (same name, extras, marker); the project `version` in a release PR |
    | `package.json` | a dependency's version, inside a dependency section the diff itself shows (never `scripts`) |
    | `.env` | `TAP_VERSION=` in a release PR |
    | `.release-please-manifest.json` | a value, to a version |
    | `CHANGELOG.md` | lines only added, in one place at the top, in a release PR |
+   | `uv.lock` | in a release PR, one line only: the `version` of the `[[package]]` whose `name` is the project's own and whose `source = { virtual = "." }`, moved to the manifest's version |
 
    A **release PR** is recognised from the diff, never its title or branch: it changes
    `.release-please-manifest.json` by version moves only, and the other release files must move
-   to a version the manifest names. `uv.lock`, `package-lock.json`, `renovate.json5` and
-   `release-please-config.json` are left for a human ("needs a human look"), as is any file whose
-   diff GitHub does not return (large or binary). So a tap release PR, which moves the project's
-   own version line in `uv.lock`, always waits for a human;
-7. the repository is listed in `renovate/global.js` (`FLEET` and `SELF_CONFIGURED`), which the
+   to a version the manifest names. For `uv.lock`, the `[[package]]` header, the `name` and the
+   `source` must all be visible in the diff's own context lines, and the project name is read
+   from `pyproject.toml`'s context under `[project]`; if any of it is not shown, it waits for a
+   human. Any other `uv.lock` change, and `package-lock.json`, `renovate.json5` and
+   `release-please-config.json`, are left for a human ("needs a human look"), as is any file
+   whose diff GitHub does not return (large or binary);
+7. every commit sha the PR pins **in one of our own repositories** is on that repository's
+   default branch: a changed `uses: unified-systems-com/<repo>/...@<sha>` line (workflows and
+   composite actions), and a changed boot-record `"commit"` (or a 40-hex `"rev"`) whose entry's
+   `"url"`, read from the diff's context, is `https://github.com/unified-systems-com/<repo>`.
+   This is the *impostor commit* check: GitHub resolves a sha that exists only in a fork through
+   the parent's name, so `unified-systems-com/tap@<sha>` can run code that was never on tap.
+   `GET repos/unified-systems-com/<repo>/compare/<sha>...<default branch>` must say `ahead` or
+   `identical`; `behind`, `diverged`, a 404, any API error, or a boot `commit` whose `url` the
+   diff does not show, leaves the run waiting. zizmor's `impostor-commit` audit accepts a sha on
+   any branch or tag; this is stricter (default branch only) because every release tag in the
+   fleet is on its default branch: all 94 tags of the 25 listed repositories were checked with
+   the same compare call on 2026-09-27, and the only one off `main` was tap's
+   `park/steampipe-tooling`, not a release. A boot record pinned to a tag's commit is therefore
+   held to the same rule. Shas of third-party actions and records (any other owner) are not
+   checked here;
+8. the repository is listed in `renovate/global.js` (`FLEET` and `SELF_CONFIGURED`), which the
    script reads without executing it and refuses to run if it finds no repositories.
 
 The line shapes are those of the fleet's merged Renovate and release-please PRs; a shape not seen

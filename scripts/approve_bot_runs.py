@@ -22,18 +22,21 @@ A run is approved only if ALL of these hold:
   4. exactly one open PR matches it, authored by the fork bot (by id, account type `User`),
      from that head repository and branch, at the run's head sha, into the default branch;
   5. every file the PR changes is on ALLOWED_PATHS, none is removed, renamed or copied, no
-     workflow file is added, and it changes at most MAX_FILES files;
+     workflow file or composite action is added, and it changes at most MAX_FILES files;
   6. every changed LINE has a shape the bots produce, read from each file's diff (the files
      API `patch`). A file whose diff GitHub omits (large or binary) is refused. Each change
      must replace one line with one line, and per path:
        .github/workflows/*.yml|yaml  a `uses:` line whose ref moves to a 40-hex sha, all else
-                                     on the line identical but a version comment (`# v7`,
+       .github/actions/*/action.yml  on the line identical but a version comment (`# v7`,
                                      `# main`) that may be added or rewritten;
        **/*.boot.json                the value of a `"rev"` (tag name) or `"commit"` (40-hex);
-       **/tap-plugin.toml            the value of `sha256` (64 hex), or of `plugin_version` in
-                                     a release-please PR;
-       Dockerfile                    the tag and digest of a `FROM` or `COPY --from=` image,
-                                     same image and stage, new digest a sha256;
+       **/tap-plugin.toml            the value of `sha256` (64 hex), only when the same PR also
+                                     changes a `*.boot.json` inside the same
+                                     `tap_plugin/<slug>/` package (the record's digest moves
+                                     with the record); or `plugin_version` in a
+                                     release-please PR;
+       Dockerfile,                   the tag and digest of a `FROM` or `COPY --from=` image,
+       docker/postgres/Dockerfile    same image and stage, new digest a sha256;
        pyproject.toml                a dependency string's version specifier (same name,
                                      extras and marker), or the project `version` in a
                                      release-please PR;
@@ -42,13 +45,29 @@ A run is approved only if ALL of these hold:
        .env                          `TAP_VERSION=`, in a release-please PR;
        .release-please-manifest.json a value moving to a version;
        CHANGELOG.md                  lines only added, in one hunk at the top, in a
-                                     release-please PR.
+                                     release-please PR;
+       uv.lock                       in a release-please PR only, and only one line: the
+                                     `version` of the `[[package]]` whose `name` is the
+                                     project's own (read from pyproject.toml's diff context) and
+                                     whose `source = { virtual = "." }`, moved to the manifest
+                                     version. The diff's own context must show the block's
+                                     `[[package]]`, `name` and `source` lines, or it is refused.
      A release-please PR is recognised from the diff alone: it changes the release manifest
      and only by version moves; the other release files must move to a manifest version.
-     Any other allowed path (uv.lock, package-lock.json, renovate.json5,
-     release-please-config.json) is "needs a human look": a lock file cannot be read line by
+     Any other allowed path (package-lock.json, renovate.json5, release-please-config.json),
+     and any other uv.lock change, is "needs a human look": a lock file cannot be read line by
      line, and the bots have never changed the other two;
-  7. the target repository is listed in renovate/global.js (FLEET, plus SELF_CONFIGURED).
+  7. every commit sha the PR pins in one of our own repositories is on that repository's
+     default branch: a changed `uses: unified-systems-com/<repo>/...@<sha>` line, and a changed
+     boot-record `"commit"` (or 40-hex `"rev"`) whose entry's `"url"`, read from the diff's
+     context, is `https://github.com/unified-systems-com/<repo>`. GitHub serves a commit that
+     exists only in a fork as if it were in the parent (an "impostor commit"), so a sha alone
+     says nothing about whose code it is. `compare/<sha>...<default branch>` must say `ahead`
+     or `identical`; anything else, a 404, any API error, or a boot `commit` whose `url` the
+     diff does not show, is refused. Commits pinned to a release tag are held to the same rule:
+     every release tag in the fleet was on its default branch when this was written
+     (2026-09-27). Shas in third-party repositories (any other owner) are out of scope here;
+  8. the target repository is listed in renovate/global.js (FLEET, plus SELF_CONFIGURED).
 
 Widening ALLOWED_PATHS or CONTENT_RULES, or any other rule here, is the maintainer's decision.
 
@@ -83,6 +102,7 @@ BOT_TYPE = "User"
 ALLOWED_PATHS = (
     ".github/workflows/*.yml",
     ".github/workflows/*.yaml",
+    ".github/actions/*/action.yml",  # composite actions: `uses:` pins, like workflows
     "pyproject.toml",
     "uv.lock",
     "package.json",
@@ -94,6 +114,7 @@ ALLOWED_PATHS = (
     "release-please-config.json",
     ".env",  # tap's release-please extra-file
     "Dockerfile",
+    "docker/postgres/Dockerfile",
     "renovate.json5",
 )
 ALLOWED_FILE_STATUSES = ("modified", "changed", "added")
@@ -146,6 +167,7 @@ class Api(Protocol):
     def pull(self, full_name: str, number: int) -> dict[str, Any]: ...
     def open_pulls_from(self, full_name: str, head_owner: str, head_branch: str) -> list[dict[str, Any]]: ...
     def pull_files(self, full_name: str, number: int) -> list[dict[str, Any]]: ...
+    def compare_status(self, full_name: str, base: str, head: str) -> str: ...
 
 
 @dataclass
@@ -204,6 +226,8 @@ def check_files(files: list[dict[str, Any]], expected_count: Any) -> str | None:
             return f"file not on the allowlist: {name}"
         if status == "added" and name.startswith(".github/workflows/"):
             return f"adds a workflow file: {name}"
+        if status == "added" and name.startswith(".github/actions/"):
+            return f"adds a composite action: {name}"
     return check_content(files)
 
 
@@ -294,6 +318,8 @@ class Context:
     """Facts about the whole PR that a single file's rule needs."""
 
     release_versions: frozenset[str]  # new versions in the release-please manifest; empty if not a release PR
+    boot_packages: frozenset[str] = frozenset()  # `.../tap_plugin/<slug>` dirs holding a changed *.boot.json
+    project_name: str | None = None  # [project] name, from pyproject.toml's diff context in a release PR
 
 
 # A `uses:` line: everything up to the `@` must stay byte-identical (indent, list dash, quote,
@@ -366,13 +392,28 @@ def rule_plugin_manifest(path: str, c: Change, ctx: Context) -> str | None:
     if not old or not new or (old["indent"], old["key"], old["rest"]) != (new["indent"], new["key"], new["rest"]):
         return "a changed line is not a value-only `key = \"value\"` move"
     if new["key"] == "sha256" and not new["indent"]:
-        return None if SHA256.fullmatch(new["value"]) else "a `sha256` is not 64 hex"
+        if not SHA256.fullmatch(new["value"]):
+            return "a `sha256` is not 64 hex"
+        # The digest is of an in-package boot record; it only moves when that record does.
+        package = _plugin_package(path)
+        if package is None or package not in ctx.boot_packages:
+            return "a `sha256` changes with no boot record changed in the same tap_plugin/<slug>/ package"
+        return None
     if new["key"] == "plugin_version" and not new["indent"]:
         return _release_version(new["value"], ctx, "`plugin_version`")
     return f"`{printable(new['key'], 30)}` changes (only `sha256` and `plugin_version` may)"
 
 
-# Root Dockerfile. Image names are lower-case per the OCI distribution spec; a registry port
+def _plugin_package(path: str) -> str | None:
+    """The `.../tap_plugin/<slug>` directory a file sits in (at any depth), or None."""
+    parts = path.split("/")
+    for i in range(len(parts) - 2, 0, -1):
+        if parts[i - 1] == "tap_plugin":
+            return "/".join(parts[: i + 1])
+    return None
+
+
+# Root Dockerfile (and tap's docker/postgres/Dockerfile). Image names are lower-case per the OCI distribution spec; a registry port
 # or a `--platform` flag was never seen in a bot PR, so it is refused.
 _IMAGE = r"(?P<image>[a-z0-9][a-z0-9._/-]*)(?::(?P<tag>[A-Za-z0-9_][A-Za-z0-9_.-]*))?(?:@sha256:(?P<digest>[^\s]*))?"
 _FROM_RE = re.compile(r"^FROM " + _IMAGE + r"(?P<rest>(?: AS [A-Za-z0-9_.-]+)?)$")
@@ -466,14 +507,66 @@ def rule_release_manifest(path: str, c: Change, ctx: Context) -> str | None:
     return None if SEMVER.fullmatch(move[2]) else "a release manifest value is not a version"
 
 
-# Content rules by path: (glob, rule). A path on ALLOWED_PATHS with no rule here (uv.lock,
-# package-lock.json, renovate.json5, release-please-config.json) is never approved by script.
+# uv.lock records the project's own version, in the `[[package]]` block whose source is the
+# project itself, so release-please moves that one line. That is the only uv.lock change read
+# here; every other one is "needs a human look". The block's lines come from the diff's own
+# context (unchanged lines, so the base branch's), never from anything the PR adds.
+_UV_VERSION_RE = re.compile(r'^version = "(?P<value>[^"\\]*)"$')
+_UV_NAME_RE = re.compile(r'^name = "(?P<value>[^"\\]*)"$')
+_UV_VIRTUAL_SOURCE = 'source = { virtual = "." }'
+
+
+def _normalized(name: str) -> str:
+    """PEP 503 name normalisation, which uv.lock uses for package names."""
+    return re.sub(r"[-_.]+", "-", name).lower()
+
+
+def check_uv_lock(patch: str, ctx: Context) -> str | None:
+    """Only the project's own `version` line, moved to the release manifest's version."""
+    if not ctx.release_versions:
+        return "needs a human look: uv.lock (outside a release-please PR)"
+    hunks = parse_patch(patch)
+    if hunks is None or len(hunks) != 1:
+        return "needs a human look: uv.lock (not one version line)"
+    lines = hunks[0][1]
+    changed = [i for i, (tag, _) in enumerate(lines) if tag != " "]
+    if len(changed) != 2 or lines[changed[0]][0] != "-" or lines[changed[1]][0] != "+" or changed[1] != changed[0] + 1:
+        return "needs a human look: uv.lock (not one version line)"
+    old, new = (_UV_VERSION_RE.match(lines[i][1]) for i in changed)
+    if not old or not new:
+        return "needs a human look: uv.lock (the changed line is not a `version`)"
+    # The block, from its `[[package]]` header down to the change, must name the project...
+    above = [text for _, text in lines[: changed[0]]]
+    header = next((i for i in range(len(above) - 1, -1, -1) if above[i].startswith("[")), None)
+    if header is None or above[header] != "[[package]]":
+        return "needs a human look: uv.lock (the `[[package]]` block is not visible in the diff)"
+    names = [m["value"] for m in map(_UV_NAME_RE.match, above[header + 1 :]) if m]
+    if ctx.project_name is None:
+        return "needs a human look: uv.lock (the project name is not visible in pyproject.toml's diff)"
+    if names != [_normalized(ctx.project_name)] and names != [ctx.project_name]:
+        return "needs a human look: uv.lock (the version is not the project's own package)"
+    # ...and, below it and before the block ends, be the project itself.
+    below = []
+    for _, text in lines[changed[1] + 1 :]:
+        if not text.strip() or text.startswith("["):
+            break
+        below.append(text)
+    if _UV_VIRTUAL_SOURCE not in below:
+        return "needs a human look: uv.lock (the package's `source = { virtual = \".\" }` is not visible in the diff)"
+    return _release_version(new["value"], ctx, "uv.lock's project `version`")
+
+
+# Content rules by path: (glob, rule). A path on ALLOWED_PATHS with no rule here
+# (package-lock.json, renovate.json5, release-please-config.json) is never approved by script;
+# CHANGELOG.md and uv.lock are read whole-diff, below.
 CONTENT_RULES = (
     (".github/workflows/*.yml", rule_workflow),
     (".github/workflows/*.yaml", rule_workflow),
+    (".github/actions/*/action.yml", rule_workflow),
     ("**/*.boot.json", rule_boot_record),
     ("**/tap-plugin.toml", rule_plugin_manifest),
     ("Dockerfile", rule_dockerfile),
+    ("docker/postgres/Dockerfile", rule_dockerfile),
     (".env", rule_env),
     ("pyproject.toml", rule_pyproject),
     ("package.json", rule_package_json),
@@ -505,9 +598,14 @@ def _release_context(files: list[dict[str, Any]]) -> Context | str:
     """A release-please PR is one whose file set includes the release manifest and whose
     manifest diff is a pure version move; its new versions are what the other release files
     may move to. Decided from the diff alone, never from the PR's title or branch."""
+    boot_packages = frozenset(
+        pkg for f in files
+        if isinstance(f.get("filename"), str) and f["filename"].endswith(".boot.json")
+        and (pkg := _plugin_package(f["filename"])) is not None
+    )
     manifest = next((f for f in files if f.get("filename") == RELEASE_MANIFEST), None)
     if manifest is None:
-        return Context(frozenset())
+        return Context(frozenset(), boot_packages)
     patch = manifest.get("patch")
     if not isinstance(patch, str):
         return f"no diff from GitHub for {RELEASE_MANIFEST} (large or binary), needs a human look"
@@ -520,7 +618,34 @@ def _release_context(files: list[dict[str, Any]]) -> Context | str:
         if why:
             return f"{RELEASE_MANIFEST}: {why}"
         versions.add(_JSON_STR_RE.match(c.new)["value"])  # type: ignore[index]
-    return Context(frozenset(versions))
+    return Context(frozenset(versions), boot_packages, _project_name(files))
+
+
+_TOML_HEADER_RE = re.compile(r"^\[(?P<name>[^\]]+)\]\s*$")
+
+
+def _project_name(files: list[dict[str, Any]]) -> str | None:
+    """The `[project]` name, read from pyproject.toml's diff context above its `version`
+    move; None when the diff does not show both the `[project]` header and the name."""
+    f = next((f for f in files if f.get("filename") == "pyproject.toml"), None)
+    patch = f.get("patch") if f else None
+    moves = changes(patch) if isinstance(patch, str) else "no diff"
+    if isinstance(moves, str):
+        return None
+    for c in moves:
+        m = _TOML_STR_RE.match(c.new)
+        if not m or m["key"] != "version" or m["indent"]:
+            continue
+        name = None
+        for above in reversed(c.before):
+            h = _TOML_HEADER_RE.match(above)
+            if h:
+                return name if h["name"] == "project" else None
+            n = _TOML_STR_RE.match(above)
+            if n and n["key"] == "name" and not n["indent"] and name is None:
+                name = n["value"]
+        return None
+    return None
 
 
 def check_content(files: list[dict[str, Any]]) -> str | None:
@@ -531,12 +656,16 @@ def check_content(files: list[dict[str, Any]]) -> str | None:
     for f in files:
         name, patch = f["filename"], f.get("patch")
         rule = _rule_for(name)
-        if rule is None and name != "CHANGELOG.md":
+        if rule is None and name not in ("CHANGELOG.md", "uv.lock"):
             return f"needs a human look: {name}"
         if not isinstance(patch, str) or not patch:
             return f"no diff from GitHub for {name} (large or binary), needs a human look"
         if name == "CHANGELOG.md":
             why = check_changelog(patch, ctx)
+        elif name == "uv.lock":
+            why = check_uv_lock(patch, ctx)
+            if why:
+                return why
         else:
             moves = changes(patch)
             why = moves if isinstance(moves, str) else next(
@@ -544,6 +673,102 @@ def check_content(files: list[dict[str, Any]]) -> str | None:
             )
         if why:
             return f"{name}: {why}"
+    return None
+
+
+# --------------------------------------------------------------------------------------------
+# Impostor commits. GitHub stores a repository and its forks in one object network and
+# resolves any sha in that network through the parent's name, so `unified-systems-com/tap@<sha>`
+# runs a commit that may exist only in somebody's fork. The fork bot's PR is itself from a
+# fork. So every sha the PR pins in one of our repositories must be on that repository's
+# default branch. zizmor's `impostor-commit` audit (after Chainguard's clank) accepts a sha on
+# ANY branch or tag, using the same compare API; this is stricter, default branch only, because
+# every release tag in the fleet was on its default branch (checked with this compare call for
+# all 94 tags of the 25 listed repositories on 2026-09-27; the one exception, tap's
+# `park/steampipe-tooling`, is not a release tag). Shas of third-party actions and records
+# (any other owner) are not checked here.
+
+_GITHUB_URL_RE = re.compile(r"^https://github\.com/(?P<owner>[^/\s]+)/(?P<repo>[^/\s]+?)(?:\.git)?/?$")
+_BRANCH_RE = re.compile(r"^[A-Za-z0-9._/-]+$")
+
+
+def _ours(owner: str) -> bool:
+    return owner.lower() == ORG.lower()  # GitHub owner names are case-insensitive
+
+
+def _boot_url(c: Change) -> str | None:
+    """The `"url"` of the boot-record entry a changed line sits in, from the lines above it
+    in the same JSON object as shown by the diff; None if the diff does not show it."""
+    depth = _indent(c.old)
+    for above in reversed(c.before):
+        if not above.strip():
+            continue
+        if _indent(above) < depth:
+            return None  # reached the object's opening line
+        m = _JSON_STR_RE.match(above)
+        if m and m["key"] == "url" and _indent(above) == depth:
+            return m["value"]
+    return None
+
+
+def org_pins(files: list[dict[str, Any]]) -> list[tuple[str, str, str]] | str:
+    """(repository name, sha, file) for every sha the PR's changed lines pin in one of our
+    own repositories. Run after check_content, so every changed line has a known shape."""
+    pins: list[tuple[str, str, str]] = []
+    for f in files:
+        name, patch = f["filename"], f.get("patch")
+        rule = _rule_for(name)
+        if rule not in (rule_workflow, rule_boot_record) or not isinstance(patch, str):
+            continue
+        moves = changes(patch)
+        if isinstance(moves, str):
+            return f"{name}: {moves}"
+        for c in moves:
+            if rule is rule_workflow:
+                m = _USES_RE.match(c.new)
+                target = m["pre"].split("uses:", 1)[1].strip().lstrip("\"'") if m else ""
+                owner, _, rest = target.partition("/")
+                if m and _ours(owner):
+                    pins.append((rest.split("/", 1)[0], m["ref"], name))
+                continue
+            move = _json_value_move(c)
+            if isinstance(move, str) or move[0] not in ("commit", "rev") or not SHA40.fullmatch(move[2]):
+                continue
+            url = _boot_url(c)
+            if url is None:
+                return f"{name}: a boot-record `{move[0]}` moves but the diff does not show its entry's `url`"
+            u = _GITHUB_URL_RE.match(url)
+            if u is None:
+                if url.lower().startswith(f"https://github.com/{ORG.lower()}/"):
+                    return f"{name}: a boot-record `url` is not a plain repository URL"
+                continue  # not one of ours: out of scope
+            if _ours(u["owner"]):
+                pins.append((u["repo"], move[2], name))
+    return pins
+
+
+def check_pins(files: list[dict[str, Any]], api: Api) -> str | None:
+    """Return why a pinned sha is not on its repository's default branch, or None."""
+    pins = org_pins(files)
+    if isinstance(pins, str):
+        return pins
+    defaults: dict[str, str] = {}
+    for repo, sha, name in dict.fromkeys(pins):
+        where = f"{name}: {ORG}/{printable(repo, 40)}@{sha[:12]}"
+        if not NAME_RE.match(repo) or not SHA40.fullmatch(sha):
+            return f"{where}: not a repository name and commit sha"
+        full = f"{ORG}/{repo}"
+        try:
+            if repo not in defaults:
+                defaults[repo] = api.repo(full).get("default_branch") or ""
+            branch = defaults[repo]
+            if not _BRANCH_RE.match(branch) or ".." in branch:
+                return f"{where}: the repository's default branch is unreadable"
+            status = api.compare_status(full, sha, branch)
+        except GhError as e:
+            return f"{where}: could not verify the commit is on the default branch ({printable(e, 60)})"
+        if status not in ("ahead", "identical"):
+            return f"{where}: commit is not on {printable(branch, 30)} (compare says {printable(status, 20)}), possible impostor commit"
     return None
 
 
@@ -617,8 +842,14 @@ def decide(target: str, run: dict[str, Any], api: Api) -> Decision:
     if not default_branch or _id(pr, "base", "ref") != default_branch:
         return Decision(False, "PR base is not the default branch", number)
 
-    # 5. Changed files.
-    why = check_files(api.pull_files(target, number), pr.get("changed_files"))
+    # 5, 6. Changed files and lines.
+    files = api.pull_files(target, number)
+    why = check_files(files, pr.get("changed_files"))
+    if why:
+        return Decision(False, why, number)
+
+    # 7. Every sha pinned in one of our repositories is on its default branch.
+    why = check_pins(files, api)
     if why:
         return Decision(False, why, number)
 
@@ -660,8 +891,26 @@ def gh_pages(path: str, key: str | None = None, **params: str) -> list[dict[str,
 
 
 class GhApi:
+    def __init__(self) -> None:
+        self._repos: dict[str, dict[str, Any]] = {}
+        self._compares: dict[tuple[str, str, str], str] = {}
+
     def repo(self, full_name: str) -> dict[str, Any]:
-        return gh_get(f"repos/{full_name}")
+        if full_name not in self._repos:
+            self._repos[full_name] = gh_get(f"repos/{full_name}")
+        return self._repos[full_name]
+
+    def compare_status(self, full_name: str, base: str, head: str) -> str:
+        """`status` of `compare/<base>...<head>`: `ahead` or `identical` when base is an
+        ancestor of head. A 404 (no common history) raises GhError."""
+        key = (full_name, base, head)
+        if key not in self._compares:
+            body = gh("-X", "GET", f"repos/{full_name}/compare/{base}...{head}", "-f", "per_page=1", "--jq", "{status: .status}")
+            status = body.get("status") if isinstance(body, dict) else None
+            if not isinstance(status, str):
+                raise GhError(f"compare {base[:12]}...{head}: no status")
+            self._compares[key] = status
+        return self._compares[key]
 
     def repo_by_id(self, repo_id: int) -> dict[str, Any]:
         return gh_get(f"repositories/{int(repo_id)}")
