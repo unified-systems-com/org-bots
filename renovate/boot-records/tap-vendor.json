@@ -1,5 +1,5 @@
 {
-  "description": "Pin for the vendored copy of tap's boot-record digest derivation. Each file under tap/ is byte-identical to the same path in `repository` at `commit`; `files` maps each path to its sha256. refresh.py refuses to run if a file does not match, and check-vendor.sh compares the pin against the repository.",
+  "description": "Pin for the vendored copy of tap's boot-record digest derivation. Each file under tap/ is byte-identical to the same path in `repository` at `commit`; `files` maps each path to its sha256. refresh.py refuses to run if a file does not match, and vendor.py compares the pin against the repository (run weekly by .github/workflows/boot-records-check.yml).",
   "repository": "unified-systems-com/tap",
   "commit": "db167a1c945f8983111a1511da5e09fdc0d4daa9",
   "files": {

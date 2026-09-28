@@ -4,7 +4,7 @@
     renovate/boot-records/vendor.py                  # check the pin against tap, and tap's main
     renovate/boot-records/vendor.py --update <sha>   # re-vendor from tap at <sha>, rewrite the pin
 
-Runs on the maintainer's machine with their `gh` login (tap is public, so read access is enough).
+Runs on the maintainer's machine with their `gh` login, and weekly in CI (.github/workflows/boot-records-check.yml) with a read-only token; tap is public, so read access is enough.
 It calls `gh` with an argument list, never a shell. Standard library only.
 
 --check exits 0 when every vendored file is byte-identical to tap at the pinned commit, 1 when
