@@ -9,9 +9,9 @@
 //
 // Why a module inside the global config, not a `local>unified-systems-com/org-bots:...`
 // preset: Renovate resolves a `local>` preset through the platform with the run's token.
-// The run's token is now the fork bot's, and the fork bot has no access to this private
-// repository, so the preset lookup would fail on every repository. Loaded from disk here,
-// the config needs no platform read at all.
+// The run's token is the fork bot's. Loaded from disk here, the config needs no platform read at
+// all, so the preset never depends on what that token can see (this repository was private when
+// the choice was made; it is public now, and the reason still holds).
 module.exports = {
   extends: [
     "config:recommended",
