@@ -1,0 +1,70 @@
+{
+  "description": "One fork-bot Renovate run waiting for approval on tap-plugin-github-core, with everything the decision fetches. Field shapes follow GitHub's REST responses (runs list, repositories/{id}, pulls, pulls/{n}/files). Ids and shas are made up; the files, with their patches, are the real ones of tap-plugin-github-core#190. Tests mutate a copy.",
+  "target": "unified-systems-com/tap-plugin-github-core",
+  "target_repo": {
+    "description": "GET repos/{target}",
+    "id": 1000,
+    "full_name": "unified-systems-com/tap-plugin-github-core",
+    "default_branch": "main",
+    "fork": false
+  },
+  "run": {
+    "description": "One entry of GET repos/{target}/actions/runs?event=pull_request&status=action_required",
+    "id": 36329404266,
+    "name": "ci",
+    "event": "pull_request",
+    "status": "completed",
+    "conclusion": "action_required",
+    "head_branch": "renovate/tap-reusable-workflows",
+    "head_sha": "a4ceda3dc195f2113e5033394b29ac2d70d5eab7",
+    "pull_requests": [],
+    "actor": {"login": "tap-renovate-remote", "id": 334543231, "type": "User"},
+    "triggering_actor": {"login": "tap-renovate-remote", "id": 334543231, "type": "User"},
+    "repository": {"id": 1000, "full_name": "unified-systems-com/tap-plugin-github-core"},
+    "head_repository": {
+      "id": 2000,
+      "full_name": "tap-renovate-remote/tap-plugin-github-core",
+      "fork": true,
+      "owner": {"login": "tap-renovate-remote", "id": 334543231, "type": "User"}
+    }
+  },
+  "head_repo": {
+    "description": "GET repositories/{run.head_repository.id}",
+    "id": 2000,
+    "full_name": "tap-renovate-remote/tap-plugin-github-core",
+    "fork": true,
+    "owner": {"login": "tap-renovate-remote", "id": 334543231, "type": "User"},
+    "parent": {"id": 1000, "full_name": "unified-systems-com/tap-plugin-github-core"}
+  },
+  "pulls": [
+    {
+      "description": "GET repos/{target}/pulls/{n} for each open PR from tap-renovate-remote:{run.head_branch}",
+      "number": 190,
+      "state": "open",
+      "changed_files": 3,
+      "user": {"login": "tap-renovate-remote", "id": 334543231, "type": "User"},
+      "head": {
+        "ref": "renovate/tap-reusable-workflows",
+        "sha": "a4ceda3dc195f2113e5033394b29ac2d70d5eab7",
+        "repo": {"id": 2000, "full_name": "tap-renovate-remote/tap-plugin-github-core"}
+      },
+      "base": {
+        "ref": "main",
+        "repo": {"id": 1000, "full_name": "unified-systems-com/tap-plugin-github-core"}
+      }
+    }
+  ],
+  "files": [
+    {"filename": ".github/workflows/ci.yml", "status": "modified", "patch": "@@ -30,7 +30,7 @@ jobs:\n     permissions:\n       contents: read\n       security-events: write\n-    uses: unified-systems-com/tap/.github/workflows/plugin-ci.yml@1ffb2417032350ec1d31f0af400c25b225ee66ca\n+    uses: unified-systems-com/tap/.github/workflows/plugin-ci.yml@57505751b27900e5d58fc0c2b40df32f18a2b980\n     with:\n       plugin_slug: github_core\n     secrets:"},
+    {"filename": ".github/workflows/nightly.yml", "status": "modified", "patch": "@@ -20,7 +20,7 @@ permissions:\n   contents: read\n jobs:\n   nightly:\n-    uses: unified-systems-com/tap/.github/workflows/plugin-nightly.yml@1ffb2417032350ec1d31f0af400c25b225ee66ca\n+    uses: unified-systems-com/tap/.github/workflows/plugin-nightly.yml@57505751b27900e5d58fc0c2b40df32f18a2b980\n     # REQUIRED on this job. GitHub checks every job of a called workflow — and of the workflows\n     # IT calls — against this grant BEFORE starting anything, so a scope missing here fails the\n     # whole run at startup with zero jobs and no log. `security-events: write` is plugin-ci's"},
+    {"filename": ".github/workflows/release-sbom.yml", "status": "modified", "patch": "@@ -24,6 +24,6 @@ jobs:\n       contents: read\n       id-token: write\n       attestations: write\n-    uses: unified-systems-com/tap/.github/workflows/plugin-release-sbom.yml@1ffb2417032350ec1d31f0af400c25b225ee66ca # main\n+    uses: unified-systems-com/tap/.github/workflows/plugin-release-sbom.yml@57505751b27900e5d58fc0c2b40df32f18a2b980 # main\n     with:\n       plugin_slug: github_core"}
+  ],
+  "org_repos": {
+    "description": "GET repos/unified-systems-com/{repo} for each of our repositories the PR pins a sha in.",
+    "unified-systems-com/tap": {"full_name": "unified-systems-com/tap", "default_branch": "main"}
+  },
+  "compares": {
+    "description": "`status` of GET repos/{repo}/compare/{sha}...{default_branch}, keyed '{repo} {sha}...{branch}'. The tap sha is the one tap-plugin-github-core#190 pins; the live compare said `ahead` on 2026-09-27.",
+    "unified-systems-com/tap 57505751b27900e5d58fc0c2b40df32f18a2b980...main": "ahead"
+  }
+}

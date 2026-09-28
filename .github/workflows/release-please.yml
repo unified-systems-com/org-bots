@@ -1,28 +1,44 @@
-# Fleet release-please: release PRs and releases for the repositories in RELEASE_REPOS, as the
-# org-owned `tap-release-please` GitHub App.
+# Fleet release-please, stage 1 of 2: open or refresh each repository's rolling release PR, in
+# FORK MODE, as the fork bot (a machine user with no role on any org repository).
 #
-# Per repository, each run does what release-please-action does, in the same order:
-#   1. github-release: if a release PR has been merged since the last run, tag the merge
-#      commit vX.Y.Z and publish the GitHub Release. The tag is created with the App token,
-#      so the target's tag-push workflows (release-sbom.yml) run on it; a GITHUB_TOKEN-made
-#      tag would trigger nothing.
-#   2. release-pr: open or refresh the one rolling release PR from the conventional commits
-#      since the last release.
-# Each target carries its own release-please-config.json and .release-please-manifest.json.
-# Nothing is released until a human merges that repository's release PR.
+# Which repositories: the same discovery Renovate uses (scripts/discover_fleet.py, the
+# `discover` job): every unified-systems-com repository carrying the `tap-plugin` topic
+# (owner-checked, archived ones dropped, org-bots refused), plus tap, which is named. The job
+# needs no secret; the org's repository list is public.
 #
-# Credential: the App's private key, held ONLY as the `TAP_RELEASE_PLEASE_PRIVATE_KEY` secret
-# of this repository's `bots` environment (deploys from `main` only). The minted token is
-# scoped to RELEASE_REPOS and to contents + pull-requests write. The client ID is public.
+# Per discovered repository, this runs `release-please release-pr --fork`: the release
+# branch is pushed to the bot's fork, and the PR is opened from there, as an outside
+# contributor's would be. Nothing here can write to an org repository.
 #
-# Pilot scope: tap-plugin-github-core only. Add a repository by giving it the two config
-# files first, then appending it to RELEASE_REPOS (comma-separated names in the org).
+# After release-please, the same boot-record digest refresh Renovate runs is applied to the
+# release branch in the bot's fork (see "Digest refresh" below): moving the plugin's own `rev`
+# in its CI boot record moves the record's declared sha256, which release-please cannot compute.
+#
+# Stage 2, tagging and publishing the release after a human merges the release PR, needs
+# `contents: write` on the target, so it does NOT run here. The maintainer runs it from their
+# own machine with their own credential: scripts/cut-release.sh (see README, "Cutting a
+# release").
+#
+# Labels: release-please finds its own open release PR, and later the merged one, by the
+# `autorelease: pending` label. Applying a label needs triage access, which the bot does not
+# have, so the bot opens the PR with --skip-labeling and a maintainer labels it. Until the
+# label is on, this job refuses to refresh that PR (see "unlabelled" below): release-please
+# would otherwise push new commits to the branch but leave the old title and body, and the
+# body is what stage 2 reads the version from.
+#
+# Credential: the bot's token, held ONLY as the `FORK_BOT_TOKEN` secret of this repository's
+# `bots` environment (deploys from `main` only). The bot's login is the environment VARIABLE
+# `FORK_BOT_LOGIN`.
+#
+# Adding a repository: the `tap-plugin` topic puts it in scope (new-plugin applies it). It is
+# released once it has release-please-config.json and .release-please-manifest.json at its
+# root; until then this job skips it with a notice (see "not configured" below).
 name: release-please
 
 on:
   # Pilot: hand-run only. The hourly schedule
   #   schedule:
-  #     - cron: "23 * * * *"   # hourly: a merged release PR is tagged within the hour
+  #     - cron: "23 * * * *"   # hourly
   # comes back in the PR that ends the pilot.
   workflow_dispatch: {}
 
@@ -32,17 +48,34 @@ concurrency:
   group: release-please
   cancel-in-progress: false
 
-env:
-  RELEASE_REPOS: tap-plugin-github-core
-
 jobs:
+  discover:
+    name: discover (tap-plugin topic)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read   # check out this repository (the discovery script)
+    outputs:
+      fleet: ${{ steps.discover.outputs.fleet }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Discover the fleet
+        id: discover
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: python3 -I scripts/discover_fleet.py --github-output fleet
+
   release-please:
-    name: release-please (RELEASE_REPOS)
+    name: release-please (discovered repositories)
+    needs: discover
     runs-on: ubuntu-latest
     timeout-minutes: 15
     environment: bots
     permissions:
-      contents: read   # check out this private repository (the pinned CLI)
+      contents: read   # check out this repository (the pinned CLI)
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -53,42 +86,196 @@ jobs:
         # package-lock.json pins release-please and its whole closure by integrity hash.
         run: npm ci --ignore-scripts --no-audit --no-fund
 
-      - name: Mint the tap-release-please token
-        id: app
-        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3
-        with:
-          client-id: Iv23liUi36xOLlt7gheA   # tap-release-please (gh api apps/tap-release-please)
-          private-key: ${{ secrets.TAP_RELEASE_PLEASE_PRIVATE_KEY }}
-          owner: unified-systems-com
-          repositories: ${{ env.RELEASE_REPOS }}
-          permission-contents: write
-          permission-pull-requests: write
-
-      - name: Release, then refresh the release PR, per repository
+      - name: Refresh the release PR from the bot's fork, per repository
         working-directory: release-please
         env:
-          RP_TOKEN: ${{ steps.app.outputs.token }}
+          RP_TOKEN: ${{ secrets.FORK_BOT_TOKEN }}
+          GH_TOKEN: ${{ secrets.FORK_BOT_TOKEN }}
+          BOT: ${{ vars.FORK_BOT_LOGIN }}
+          BOT_ID: ${{ vars.FORK_BOT_ID }}
+          # tap is included and then skipped while it still runs its own release-please.yml
+          # (the "own lane" check below). Moving tap here also needs its uv.lock refresh
+          # solved and its PR-check policy decided: README, "tap".
+          FLEET_JSON: ${{ needs.discover.outputs.fleet }}
         run: |
           set -euo pipefail
+          if [[ ! "$BOT" =~ ^[A-Za-z0-9][A-Za-z0-9-]{0,38}$ ]]; then
+            echo "::error::the bots environment variable FORK_BOT_LOGIN is unset or malformed"
+            exit 1
+          fi
+          if [[ ! "$BOT_ID" =~ ^[0-9]+$ ]]; then
+            echo "::error::the bots environment variable FORK_BOT_ID is unset or malformed"
+            exit 1
+          fi
+          refresh="${GITHUB_WORKSPACE}/renovate/boot-records/refresh.py"
+          # git reads the bot's token from the environment through this helper, so it is never
+          # on a command line or in a remote URL.
+          # shellcheck disable=SC2016  # expanded by the helper's shell when git runs it, not here
+          askpass_helper='!f() { echo username=x-access-token; echo "password=${RP_TOKEN}"; }; f'
           failed=()
-          IFS=',' read -r -a repos <<< "$RELEASE_REPOS"
+          mapfile -t repos < <(jq -r '(.fleet + .core)[]' <<< "$FLEET_JSON")
+          if (( ${#repos[@]} == 0 )); then
+            echo "::error::discovery produced no repositories"
+            exit 1
+          fi
           for name in "${repos[@]}"; do
+            # discover_fleet.py only emits plain names; checked again here before any use.
+            if [[ ! "$name" =~ ^[A-Za-z0-9._-]+$ || "$name" == "." || "$name" == ".." || "$name" == "org-bots" ]]; then
+              echo "::error::discovery produced an unusable repository name"
+              exit 1
+            fi
             repo="unified-systems-com/${name}"
             echo "::group::${repo}"
-            if npx --no-install release-please github-release \
+
+            # Not configured: a discovered repository without release-please's two files at its
+            # root has nothing to release yet. Skipped with a notice, not a failure, so the
+            # topic can be applied before a repository adopts release-please.
+            if ! root=$(gh api "repos/${repo}/contents/" --jq '.[].name'); then
+              echo "::endgroup::"
+              echo "::error::could not list ${repo}'s root"
+              failed+=("$repo"); continue
+            fi
+            if ! grep -qxF 'release-please-config.json' <<< "$root" \
+               || ! grep -qxF '.release-please-manifest.json' <<< "$root"; then
+              echo "::endgroup::"
+              echo "::notice::${repo} has no release-please-config.json and .release-please-manifest.json; skipped"
+              continue
+            fi
+
+            # Own lane: a repository that still runs its own release-please workflow has an
+            # in-repo release PR already; a second one from the fork would compete with it.
+            if ! workflows=$(gh api "repos/${repo}/contents/.github/workflows" --jq '.[].name'); then
+              echo "::endgroup::"
+              echo "::error::could not list ${repo}'s workflows"
+              failed+=("$repo"); continue
+            fi
+            if grep -qxE 'release-please\.ya?ml' <<< "$workflows"; then
+              echo "::endgroup::"
+              echo "::warning::${repo} still runs its own release-please workflow; skipped until that is retired"
+              continue
+            fi
+
+            # One fork per account. Renovate names its fork <owner>-_-<repo>, but
+            # release-please's fork code addresses the upstream PR by the FORK's repository
+            # name, which only works when the two names match. So the bot's fork is renamed
+            # to <repo> when needed. Renovate finds its fork by owner, not name, so the rename
+            # does not disturb it. With no fork yet, release-please creates one named <repo>.
+            if ! fork_name=$(gh api --paginate "repos/${repo}/forks?per_page=100" \
+                               --jq ".[] | select(.owner.login == \"${BOT}\") | .name"); then
+              echo "::endgroup::"
+              echo "::error::could not list ${repo}'s forks"
+              failed+=("$repo"); continue
+            fi
+            if [[ -n "$fork_name" && "$fork_name" != "$name" ]]; then
+              echo "renaming ${BOT}/${fork_name} to ${BOT}/${name}"
+              if ! gh api -X PATCH "repos/${BOT}/${fork_name}" -f name="$name" --silent; then
+                echo "::endgroup::"
+                echo "::error::could not rename ${BOT}/${fork_name} to ${name}"
+                failed+=("$repo"); continue
+              fi
+            fi
+
+            # Unlabelled: an open release PR from the bot's fork without `autorelease: pending`
+            # is invisible to release-please, which would push to its branch and leave its
+            # title and body stale. Stop and ask for the label instead.
+            if ! unlabelled=$(gh pr list -R "$repo" --state open --limit 100 \
+                                --json number,headRefName,headRepositoryOwner,labels \
+                                --jq ".[] | select(.headRepositoryOwner.login == \"${BOT}\")
+                                          | select(.headRefName | startswith(\"release-please--\"))
+                                          | select(any(.labels[]; .name == \"autorelease: pending\") | not)
+                                          | .number"); then
+              echo "::endgroup::"
+              echo "::error::could not list ${repo}'s open pull requests"
+              failed+=("$repo"); continue
+            fi
+            if [[ -n "$unlabelled" ]]; then
+              echo "::endgroup::"
+              for n in $unlabelled; do
+                echo "::error::${repo}#${n} needs the 'autorelease: pending' label (triage access) before release-please can refresh it"
+              done
+              failed+=("$repo"); continue
+            fi
+
+            if ! npx --no-install release-please release-pr \
                  --token="$RP_TOKEN" --repo-url="$repo" \
                  --config-file=release-please-config.json \
                  --manifest-file=.release-please-manifest.json \
-               && npx --no-install release-please release-pr \
-                 --token="$RP_TOKEN" --repo-url="$repo" \
-                 --config-file=release-please-config.json \
-                 --manifest-file=.release-please-manifest.json; then
-              echo "::endgroup::"
-            else
+                 --fork --skip-labeling; then
               echo "::endgroup::"
               echo "::error::release-please failed for ${repo}"
-              failed+=("$repo")
+              failed+=("$repo"); continue
             fi
+
+            # Digest refresh. release-please moves the plugin's own `rev` in its in-package CI
+            # boot record (an extra-files entry in the repository's config), and that moves the
+            # record's sha256 declared in tap-plugin.toml, which release-please cannot compute.
+            # So the release branch gets the same refresh Renovate runs after a pin bump
+            # (renovate/boot-records/refresh.py, tap's own derivation vendored at a pinned
+            # commit), pushed to the bot's fork as one more commit. Without a CI record, or with
+            # digests already right, nothing is pushed. release-please rewrites the branch only
+            # when the release notes change, and this step runs again right after it does.
+            if ! branch=$(gh pr list -R "$repo" --state open --limit 100 \
+                            --json headRefName,headRepositoryOwner \
+                            --jq "[.[] | select(.headRepositoryOwner.login == \"${BOT}\")
+                                       | select(.headRefName | startswith(\"release-please--\"))
+                                       | .headRefName] | first // empty"); then
+              echo "::endgroup::"
+              echo "::error::could not list ${repo}'s open pull requests after release-please"
+              failed+=("$repo"); continue
+            fi
+            if [[ -z "$branch" ]]; then
+              echo "::endgroup::"
+              continue   # no release pending
+            fi
+            if [[ ! "$branch" =~ ^release-please--[A-Za-z0-9._/-]+$ || "$branch" == *..* ]]; then
+              echo "::endgroup::"
+              echo "::error::${repo}'s release branch name is unusable"
+              failed+=("$repo"); continue
+            fi
+            work=$(mktemp -d)
+            if ! git -c credential.helper= -c "credential.helper=${askpass_helper}" \
+                   clone --quiet --depth 1 --branch "$branch" \
+                   "https://github.com/${BOT}/${name}.git" "${work}/${name}"; then
+              echo "::endgroup::"
+              echo "::error::could not clone the release branch of ${BOT}/${name}"
+              failed+=("$repo"); continue
+            fi
+            if ! python3 -I "$refresh" --repo "${work}/${name}"; then
+              echo "::endgroup::"
+              echo "::error::the boot-record digest refresh failed for ${repo}"
+              failed+=("$repo"); continue
+            fi
+            if ! changed=$(git -C "${work}/${name}" status --porcelain --untracked-files=all); then
+              echo "::endgroup::"
+              echo "::error::could not read the refresh's changes for ${repo}"
+              failed+=("$repo"); continue
+            fi
+            if [[ -z "$changed" ]]; then
+              echo "boot-record digests already current"
+              echo "::endgroup::"
+              continue
+            fi
+            # Only the digest files may be committed: a modified `tap_plugin/<slug>/tap-plugin.toml`,
+            # as Renovate's fileFilters allows. Anything else the refresh touched stops the push.
+            if grep -vqE '^ M tap_plugin/[A-Za-z0-9_]+/tap-plugin\.toml$' <<< "$changed"; then
+              echo "::endgroup::"
+              echo "::error::the digest refresh for ${repo} changed files other than tap-plugin.toml; nothing pushed"
+              failed+=("$repo"); continue
+            fi
+            # The bot's own identity, as Renovate commits (renovate/global.js). No
+            # Signed-off-by: a bot does not certify the DCO; the human who merges does.
+            if ! { git -C "${work}/${name}" add -- 'tap_plugin/*/tap-plugin.toml' \
+                   && git -C "${work}/${name}" -c user.name="$BOT" \
+                     -c user.email="${BOT_ID}+${BOT}@users.noreply.github.com" \
+                     commit --quiet -m "chore: refresh boot-record digests for the release" \
+                   && git -C "${work}/${name}" -c credential.helper= -c "credential.helper=${askpass_helper}" \
+                     push --quiet origin "HEAD:refs/heads/${branch}"; }; then
+              echo "::endgroup::"
+              echo "::error::could not push the digest refresh to ${BOT}/${name}"
+              failed+=("$repo"); continue
+            fi
+            echo "pushed the boot-record digest refresh to ${BOT}/${name}:${branch}"
+            echo "::endgroup::"
           done
           # One repository failing does not stop the others; the run still goes red.
           if (( ${#failed[@]} )); then

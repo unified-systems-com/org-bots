@@ -1,0 +1,50 @@
+# Weekly check of org-bots' vendored copy of tap's boot-record digest derivation
+# (renovate/boot-records/). Renovate runs that copy after it bumps a plugin pin in an in-package
+# boot record, to rewrite the record's digest in tap-plugin.toml. The copy is frozen at the tap
+# commit in tap-vendor.json, which is what makes it safe to run; the cost is that it never
+# follows tap by itself. If tap changes how a digest is derived, Renovate would keep writing the
+# old digest and every plugin's CI would reject it. This job surfaces that drift before a sweep
+# does: it runs the copy's own tests, then compares the copy with tap at the pin and at main.
+#
+# Read-only: it changes nothing. A red run means "re-vendor": in org-bots,
+#   python3 renovate/boot-records/vendor.py --update <tap sha>
+# reviewed as its own PR. tap is public, so the job's read-only GITHUB_TOKEN is enough.
+name: boot-records-check
+
+on:
+  schedule:
+    - cron: "37 6 * * 1"   # Mondays 06:37 UTC
+  push:
+    branches: [main]
+    paths: ["renovate/boot-records/**", ".github/workflows/boot-records-check.yml"]
+  workflow_dispatch: {}
+
+permissions: {}
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Test the vendored copy and its wrapper
+        run: python3 -I -m unittest discover -s renovate/boot-records -p 'test_*.py' -v
+
+      - name: Compare the copy with tap (pin, and tap's main)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set +e
+          python3 renovate/boot-records/vendor.py
+          rc=$?
+          set -e
+          case "$rc" in
+            0) echo "vendored copy matches tap at the pin and at main" ;;
+            3) echo "::error::tap's main has moved past the vendored boot-record code. Re-vendor: python3 renovate/boot-records/vendor.py --update <tap sha>, as a reviewed PR."; exit 1 ;;
+            *) echo "::error::vendored boot-record code does not match its pin (exit $rc). Do not run Renovate until this is resolved."; exit 1 ;;
+          esac

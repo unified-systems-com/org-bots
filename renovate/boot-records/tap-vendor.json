@@ -1,0 +1,10 @@
+{
+  "description": "Pin for the vendored copy of tap's boot-record digest derivation. Each file under tap/ is byte-identical to the same path in `repository` at `commit`; `files` maps each path to its sha256. refresh.py refuses to run if a file does not match, and vendor.py compares the pin against the repository (run weekly by .github/workflows/boot-records-check.yml).",
+  "repository": "unified-systems-com/tap",
+  "commit": "1f629a596161aa01bb821d9af4b81061d2c2d4fe",
+  "files": {
+    "tap/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "tap/boot_naming.py": "e00e9b95ad0015b220decdb834db809ae948cf48071cd5d6293c3592a743fd4f",
+    "tap/boot_records.py": "cb38f18846563ad5d5fdd1aab24f3745c04995798a41bdde72f5b44d40567e3e"
+  }
+}
