@@ -23,9 +23,34 @@ A run is approved only if ALL of these hold:
      from that head repository and branch, at the run's head sha, into the default branch;
   5. every file the PR changes is on ALLOWED_PATHS, none is removed, renamed or copied, no
      workflow file is added, and it changes at most MAX_FILES files;
-  6. the target repository is listed in renovate/global.js (FLEET, plus SELF_CONFIGURED).
+  6. every changed LINE has a shape the bots produce, read from each file's diff (the files
+     API `patch`). A file whose diff GitHub omits (large or binary) is refused. Each change
+     must replace one line with one line, and per path:
+       .github/workflows/*.yml|yaml  a `uses:` line whose ref moves to a 40-hex sha, all else
+                                     on the line identical but a version comment (`# v7`,
+                                     `# main`) that may be added or rewritten;
+       **/*.boot.json                the value of a `"rev"` (tag name) or `"commit"` (40-hex);
+       **/tap-plugin.toml            the value of `sha256` (64 hex), or of `plugin_version` in
+                                     a release-please PR;
+       Dockerfile                    the tag and digest of a `FROM` or `COPY --from=` image,
+                                     same image and stage, new digest a sha256;
+       pyproject.toml                a dependency string's version specifier (same name,
+                                     extras and marker), or the project `version` in a
+                                     release-please PR;
+       package.json                  a dependency's version, in a dependency section the diff
+                                     itself shows (so never `scripts`);
+       .env                          `TAP_VERSION=`, in a release-please PR;
+       .release-please-manifest.json a value moving to a version;
+       CHANGELOG.md                  lines only added, in one hunk at the top, in a
+                                     release-please PR.
+     A release-please PR is recognised from the diff alone: it changes the release manifest
+     and only by version moves; the other release files must move to a manifest version.
+     Any other allowed path (uv.lock, package-lock.json, renovate.json5,
+     release-please-config.json) is "needs a human look": a lock file cannot be read line by
+     line, and the bots have never changed the other two;
+  7. the target repository is listed in renovate/global.js (FLEET, plus SELF_CONFIGURED).
 
-Widening ALLOWED_PATHS, or any other rule here, is the maintainer's decision.
+Widening ALLOWED_PATHS or CONTENT_RULES, or any other rule here, is the maintainer's decision.
 
 Only the Python standard library is used. `gh` is called with an argument list, never through a
 shell, and every value taken from API output is passed as its own argument or query field.
@@ -179,6 +204,346 @@ def check_files(files: list[dict[str, Any]], expected_count: Any) -> str | None:
             return f"file not on the allowlist: {name}"
         if status == "added" and name.startswith(".github/workflows/"):
             return f"adds a workflow file: {name}"
+    return check_content(files)
+
+
+# --------------------------------------------------------------------------------------------
+# What the changed lines say. Every rule below was read off the diffs of merged Renovate and
+# release-please PRs in the fleet; a line shape not seen there is refused. The diff is the
+# files API `patch` field, which GitHub omits for a large or binary diff: then the file is
+# refused, never guessed at.
+
+SHA40 = re.compile(r"[0-9a-f]{40}")
+SHA256 = re.compile(r"[0-9a-f]{64}")
+SEMVER = re.compile(r"\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?")
+GIT_TAG = re.compile(r"[A-Za-z0-9][A-Za-z0-9._+-]*")
+
+RELEASE_MANIFEST = ".release-please-manifest.json"
+
+_HUNK_RE = re.compile(r"@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@")
+
+
+@dataclass
+class Change:
+    """One changed line: a removed line and the added line that replaces it, in hunk order."""
+
+    old: str
+    new: str
+    before: list[str]  # the hunk's old-side lines above this change, nearest last
+
+
+def parse_patch(patch: str) -> list[tuple[int, list[tuple[str, str]]]] | None:
+    """Split a unified diff into (old start line, [(tag, text)]) hunks; None if malformed."""
+    hunks: list[tuple[int, list[tuple[str, str]]]] = []
+    for line in patch.split("\n"):
+        if line.startswith("@@"):
+            m = _HUNK_RE.match(line)
+            if not m:
+                return None
+            hunks.append((int(m.group(1)), []))
+        elif not hunks:
+            return None
+        elif line.startswith("\\"):
+            continue  # "\ No newline at end of file"
+        elif line[:1] in (" ", "-", "+"):
+            hunks[-1][1].append((line[0], line[1:]))
+        elif line == "":
+            hunks[-1][1].append((" ", ""))
+        else:
+            return None
+    return hunks or None
+
+
+def changes(patch: str) -> list[Change] | str:
+    """Pair each removed line with its replacement. Every run of changed lines must be N
+    removals followed by N additions; anything else (a line only added, or only removed) is
+    not a value move, and the reason is returned instead."""
+    hunks = parse_patch(patch)
+    if hunks is None:
+        return "unreadable diff"
+    out: list[Change] = []
+    for _, lines in hunks:
+        old_side: list[str] = []
+        i = 0
+        while i < len(lines):
+            if lines[i][0] == " ":
+                old_side.append(lines[i][1])
+                i += 1
+                continue
+            removed, added = [], []
+            while i < len(lines) and lines[i][0] == "-":
+                removed.append(lines[i][1])
+                i += 1
+            while i < len(lines) and lines[i][0] == "+":
+                added.append(lines[i][1])
+                i += 1
+            if i < len(lines) and lines[i][0] == "-":
+                return "removed and added lines interleave"
+            if len(removed) != len(added):
+                return f"{len(removed)} lines removed but {len(added)} added in one place"
+            for old, new in zip(removed, added):
+                out.append(Change(old, new, list(old_side)))
+                old_side.append(old)
+    if not out:
+        return "no changed lines"
+    return out
+
+
+@dataclass
+class Context:
+    """Facts about the whole PR that a single file's rule needs."""
+
+    release_versions: frozenset[str]  # new versions in the release-please manifest; empty if not a release PR
+
+
+# A `uses:` line: everything up to the `@` must stay byte-identical (indent, list dash, quote,
+# owner/repo/path), so only the ref and a version comment after it can move.
+_USES_RE = re.compile(
+    r"""^(?P<pre>\s*(?:-\s+)?uses:\s*["']?[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+(?:/[^@\s"']+)?)"""
+    r"""@(?P<ref>[^\s"'#]+)(?P<quote>["']?)(?P<rest>.*)$"""
+)
+# The comment Renovate writes after a pin: `# v7`, `# v4.2.0`, `# 0.9.1`, `# main`. It may be
+# added (pinning `@v7` gives `@<sha> # v7`), rewritten (`# v2` to `# v3`) or kept; whatever
+# follows it must not change.
+_VERSION_COMMENT_RE = re.compile(r"^\s+#\s*(?:v?\d[0-9A-Za-z.+-]*|main)(?=\s|$)")
+
+
+def _drop_version_comment(rest: str) -> str:
+    return _VERSION_COMMENT_RE.sub("", rest, count=1)
+
+
+def rule_workflow(path: str, c: Change, ctx: Context) -> str | None:
+    old, new = _USES_RE.match(c.old), _USES_RE.match(c.new)
+    if not old or not new:
+        return "a changed line is not a `uses:` line"
+    if old["pre"] != new["pre"] or old["quote"] != new["quote"]:
+        return "a `uses:` line changes more than its ref"
+    if not SHA40.fullmatch(new["ref"]):
+        return "a `uses:` ref is not moved to a 40-hex commit sha"
+    if old["rest"] != new["rest"] and _drop_version_comment(old["rest"]) != _drop_version_comment(new["rest"]):
+        return "a `uses:` line's trailing text changes beyond a version comment"
+    return None
+
+
+_JSON_STR_RE = re.compile(r'^(?P<indent>\s*)"(?P<key>[^"\\]+)": "(?P<value>[^"\\]*)"(?P<comma>,?)$')
+
+
+def _json_value_move(c: Change) -> tuple[str, str, str] | str:
+    """(key, old value, new value) for a one-line `"key": "value"` change, else a reason."""
+    old, new = _JSON_STR_RE.match(c.old), _JSON_STR_RE.match(c.new)
+    if not old or not new:
+        return "a changed line is not a `\"key\": \"value\"` line"
+    if (old["indent"], old["key"], old["comma"]) != (new["indent"], new["key"], new["comma"]):
+        return "a changed line changes more than its value"
+    return old["key"], old["value"], new["value"]
+
+
+def rule_boot_record(path: str, c: Change, ctx: Context) -> str | None:
+    move = _json_value_move(c)
+    if isinstance(move, str):
+        return move
+    key, _, value = move
+    if key == "commit":
+        return None if SHA40.fullmatch(value) else "a boot-record `commit` is not a 40-hex sha"
+    if key == "rev":
+        return None if GIT_TAG.fullmatch(value) else "a boot-record `rev` is not a tag name"
+    return f"a boot-record `{printable(key, 30)}` changes (only `rev` and `commit` may)"
+
+
+def _release_version(value: str, ctx: Context, what: str) -> str | None:
+    if not ctx.release_versions:
+        return f"{what} changes outside a release-please PR"
+    if value not in ctx.release_versions:
+        return f"{what} does not match the release manifest"
+    return None
+
+
+_TOML_STR_RE = re.compile(r'^(?P<indent>\s*)(?P<key>[A-Za-z0-9_-]+) = "(?P<value>[^"\\]*)"(?P<rest>.*)$')
+
+
+def rule_plugin_manifest(path: str, c: Change, ctx: Context) -> str | None:
+    old, new = _TOML_STR_RE.match(c.old), _TOML_STR_RE.match(c.new)
+    if not old or not new or (old["indent"], old["key"], old["rest"]) != (new["indent"], new["key"], new["rest"]):
+        return "a changed line is not a value-only `key = \"value\"` move"
+    if new["key"] == "sha256" and not new["indent"]:
+        return None if SHA256.fullmatch(new["value"]) else "a `sha256` is not 64 hex"
+    if new["key"] == "plugin_version" and not new["indent"]:
+        return _release_version(new["value"], ctx, "`plugin_version`")
+    return f"`{printable(new['key'], 30)}` changes (only `sha256` and `plugin_version` may)"
+
+
+# Root Dockerfile. Image names are lower-case per the OCI distribution spec; a registry port
+# or a `--platform` flag was never seen in a bot PR, so it is refused.
+_IMAGE = r"(?P<image>[a-z0-9][a-z0-9._/-]*)(?::(?P<tag>[A-Za-z0-9_][A-Za-z0-9_.-]*))?(?:@sha256:(?P<digest>[^\s]*))?"
+_FROM_RE = re.compile(r"^FROM " + _IMAGE + r"(?P<rest>(?: AS [A-Za-z0-9_.-]+)?)$")
+_COPY_FROM_RE = re.compile(r"^COPY --from=" + _IMAGE + r"(?P<rest> .+)$")
+
+
+def rule_dockerfile(path: str, c: Change, ctx: Context) -> str | None:
+    for form in (_FROM_RE, _COPY_FROM_RE):
+        old, new = form.match(c.old), form.match(c.new)
+        if old and new:
+            break
+    else:
+        return "a changed line is not a `FROM` or `COPY --from=` image line"
+    if (old["image"], old["rest"]) != (new["image"], new["rest"]):
+        return "a Dockerfile line changes its image, stage name or arguments"
+    if not new["digest"] or not SHA256.fullmatch(new["digest"]):
+        return "a Dockerfile image is not pinned by a sha256 digest"
+    return None
+
+
+_ENV_RE = re.compile(r"^TAP_VERSION=(?P<value>[^\s#]+)(?P<rest>.*)$")
+
+
+def rule_env(path: str, c: Change, ctx: Context) -> str | None:
+    old, new = _ENV_RE.match(c.old), _ENV_RE.match(c.new)
+    if not old or not new or old["rest"] != new["rest"]:
+        return "a changed `.env` line is not a value-only `TAP_VERSION=` move"
+    return _release_version(new["value"], ctx, "`TAP_VERSION`")
+
+
+# pyproject.toml: a PEP 508 dependency string, one per line, where only the version
+# specifier moves; or the project's own `version = "..."` in a release-please PR.
+_PEP508_RE = re.compile(
+    r'^(?P<indent>\s*)"(?P<name>[A-Za-z0-9][A-Za-z0-9._-]*(?:\[[A-Za-z0-9._,-]*\])?)'
+    r'(?P<spec>[^";]*)(?P<marker>;[^"]*)?"(?P<rest>,?(?:\s+#.*)?)$'
+)
+_PEP440_CLAUSE = r"\s*(?:===|==|!=|<=|>=|~=|<|>)\s*[0-9][0-9A-Za-z.*+!-]*\s*"
+_PEP440_SPEC_RE = re.compile(_PEP440_CLAUSE + r"(?:," + _PEP440_CLAUSE + r")*")
+
+
+def rule_pyproject(path: str, c: Change, ctx: Context) -> str | None:
+    old, new = _TOML_STR_RE.match(c.old), _TOML_STR_RE.match(c.new)
+    if old and new and new["key"] == "version" and not new["indent"]:
+        if (old["key"], old["indent"], old["rest"]) != (new["key"], new["indent"], new["rest"]):
+            return "the project `version` line changes more than its value"
+        return _release_version(new["value"], ctx, "the project `version`")
+    old, new = _PEP508_RE.match(c.old), _PEP508_RE.match(c.new)
+    if not old or not new:
+        return "a changed pyproject line is not a dependency string or the project `version`"
+    if (old["indent"], old["name"], old["marker"], old["rest"]) != (new["indent"], new["name"], new["marker"], new["rest"]):
+        return "a dependency line changes more than its version specifier"
+    if not _PEP440_SPEC_RE.fullmatch(new["spec"]):
+        return "a dependency's new specifier is not a version specifier"
+    return None
+
+
+# package.json: only a dependency's version, and only inside one of these sections. The
+# section is read from the diff's own context: the nearest line above the change that is
+# indented less than it must open one of these objects. If the hunk does not show it, the
+# file is refused. So `"scripts"` (or anything else) can never change.
+_NPM_DEP_SECTIONS = ("dependencies", "devDependencies", "peerDependencies", "optionalDependencies")
+_NPM_VERSION_RE = re.compile(r"[~^]?" + SEMVER.pattern)
+_JSON_OPENER_RE = re.compile(r'^(?P<indent>\s*)"(?P<key>[^"\\]+)": \{$')
+
+
+def _indent(s: str) -> int:
+    return len(s) - len(s.lstrip(" "))
+
+
+def rule_package_json(path: str, c: Change, ctx: Context) -> str | None:
+    move = _json_value_move(c)
+    if isinstance(move, str):
+        return move
+    _, _, value = move
+    if not _NPM_VERSION_RE.fullmatch(value):
+        return "a package.json value is not moved to a version"
+    depth = _indent(c.old)
+    for above in reversed(c.before):
+        if above.strip() and _indent(above) < depth:
+            m = _JSON_OPENER_RE.match(above)
+            if m and m["key"] in _NPM_DEP_SECTIONS and _indent(above) == 2:
+                return None
+            return "a package.json change is outside the dependency sections"
+    return "a package.json change's section is not visible in the diff"
+
+
+def rule_release_manifest(path: str, c: Change, ctx: Context) -> str | None:
+    move = _json_value_move(c)
+    if isinstance(move, str):
+        return move
+    return None if SEMVER.fullmatch(move[2]) else "a release manifest value is not a version"
+
+
+# Content rules by path: (glob, rule). A path on ALLOWED_PATHS with no rule here (uv.lock,
+# package-lock.json, renovate.json5, release-please-config.json) is never approved by script.
+CONTENT_RULES = (
+    (".github/workflows/*.yml", rule_workflow),
+    (".github/workflows/*.yaml", rule_workflow),
+    ("**/*.boot.json", rule_boot_record),
+    ("**/tap-plugin.toml", rule_plugin_manifest),
+    ("Dockerfile", rule_dockerfile),
+    (".env", rule_env),
+    ("pyproject.toml", rule_pyproject),
+    ("package.json", rule_package_json),
+    (RELEASE_MANIFEST, rule_release_manifest),
+)
+_CONTENT_RES = tuple((_glob_re(p), rule) for p, rule in CONTENT_RULES)
+
+
+def _rule_for(path: str) -> Any:
+    return next((rule for r, rule in _CONTENT_RES if r.match(path)), None)
+
+
+def check_changelog(patch: str, ctx: Context) -> str | None:
+    """release-please prepends one section: a single hunk at the top, lines only added."""
+    if not ctx.release_versions:
+        return "CHANGELOG.md changes outside a release-please PR"
+    hunks = parse_patch(patch)
+    if hunks is None or len(hunks) != 1:
+        return "CHANGELOG.md is not changed in exactly one place"
+    start, lines = hunks[0]
+    if start > 1:
+        return "CHANGELOG.md is changed below its top"
+    if any(tag == "-" for tag, _ in lines):
+        return "CHANGELOG.md has removed lines"
+    return None
+
+
+def _release_context(files: list[dict[str, Any]]) -> Context | str:
+    """A release-please PR is one whose file set includes the release manifest and whose
+    manifest diff is a pure version move; its new versions are what the other release files
+    may move to. Decided from the diff alone, never from the PR's title or branch."""
+    manifest = next((f for f in files if f.get("filename") == RELEASE_MANIFEST), None)
+    if manifest is None:
+        return Context(frozenset())
+    patch = manifest.get("patch")
+    if not isinstance(patch, str):
+        return f"no diff from GitHub for {RELEASE_MANIFEST} (large or binary), needs a human look"
+    moves = changes(patch)
+    if isinstance(moves, str):
+        return f"{RELEASE_MANIFEST}: {moves}"
+    versions = set()
+    for c in moves:
+        why = rule_release_manifest(RELEASE_MANIFEST, c, Context(frozenset()))
+        if why:
+            return f"{RELEASE_MANIFEST}: {why}"
+        versions.add(_JSON_STR_RE.match(c.new)["value"])  # type: ignore[index]
+    return Context(frozenset(versions))
+
+
+def check_content(files: list[dict[str, Any]]) -> str | None:
+    """Return why a changed line disqualifies the PR, or None if every line is a bot's."""
+    ctx = _release_context(files)
+    if isinstance(ctx, str):
+        return ctx
+    for f in files:
+        name, patch = f["filename"], f.get("patch")
+        rule = _rule_for(name)
+        if rule is None and name != "CHANGELOG.md":
+            return f"needs a human look: {name}"
+        if not isinstance(patch, str) or not patch:
+            return f"no diff from GitHub for {name} (large or binary), needs a human look"
+        if name == "CHANGELOG.md":
+            why = check_changelog(patch, ctx)
+        else:
+            moves = changes(patch)
+            why = moves if isinstance(moves, str) else next(
+                (w for w in (rule(name, c, ctx) for c in moves) if w), None
+            )
+        if why:
+            return f"{name}: {why}"
     return None
 
 

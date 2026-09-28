@@ -1,0 +1,265 @@
+{
+  "description": "Real `pulls/{n}/files` entries (filename, status, patch) from merged bot PRs in unified-systems-com, one case per diff shape the content rules accept or refuse. Each case names its source PR. Tests put a case's files into the decision and mutate copies.",
+  "cases": {
+    "workflow_sha_bump": {
+      "description": "Fork-bot Renovate: reusable-workflow sha to sha, three workflows, one with an unchanged `# main` comment. tap-plugin-github-core#190 (tap-renovate-remote).",
+      "files": [
+        {
+          "filename": ".github/workflows/ci.yml",
+          "status": "modified",
+          "patch": "@@ -30,7 +30,7 @@ jobs:\n     permissions:\n       contents: read\n       security-events: write\n-    uses: unified-systems-com/tap/.github/workflows/plugin-ci.yml@1ffb2417032350ec1d31f0af400c25b225ee66ca\n+    uses: unified-systems-com/tap/.github/workflows/plugin-ci.yml@57505751b27900e5d58fc0c2b40df32f18a2b980\n     with:\n       plugin_slug: github_core\n     secrets:"
+        },
+        {
+          "filename": ".github/workflows/nightly.yml",
+          "status": "modified",
+          "patch": "@@ -20,7 +20,7 @@ permissions:\n   contents: read\n jobs:\n   nightly:\n-    uses: unified-systems-com/tap/.github/workflows/plugin-nightly.yml@1ffb2417032350ec1d31f0af400c25b225ee66ca\n+    uses: unified-systems-com/tap/.github/workflows/plugin-nightly.yml@57505751b27900e5d58fc0c2b40df32f18a2b980\n     # REQUIRED on this job. GitHub checks every job of a called workflow — and of the workflows\n     # IT calls — against this grant BEFORE starting anything, so a scope missing here fails the\n     # whole run at startup with zero jobs and no log. `security-events: write` is plugin-ci's"
+        },
+        {
+          "filename": ".github/workflows/release-sbom.yml",
+          "status": "modified",
+          "patch": "@@ -24,6 +24,6 @@ jobs:\n       contents: read\n       id-token: write\n       attestations: write\n-    uses: unified-systems-com/tap/.github/workflows/plugin-release-sbom.yml@1ffb2417032350ec1d31f0af400c25b225ee66ca # main\n+    uses: unified-systems-com/tap/.github/workflows/plugin-release-sbom.yml@57505751b27900e5d58fc0c2b40df32f18a2b980 # main\n     with:\n       plugin_slug: github_core"
+        }
+      ]
+    },
+    "workflow_long_comment": {
+      "description": "Fork-bot Renovate: sha bump on a line whose long trailing comment is kept verbatim. zizmor-tap#51 (tap-renovate-remote).",
+      "files": [
+        {
+          "filename": ".github/workflows/ci.yml",
+          "status": "modified",
+          "patch": "@@ -27,7 +27,7 @@ jobs:\n       security-events: write\n     # tap#365 / PR# 373 - tap: plugin-ci fails closed and tests the declared floor. Move\n     # this pin to the SHA of tap main once PR# 373 merges (Renovate does not track it).\n-    uses: unified-systems-com/tap/.github/workflows/plugin-ci.yml@1ffb2417032350ec1d31f0af400c25b225ee66ca\n+    uses: unified-systems-com/tap/.github/workflows/plugin-ci.yml@57505751b27900e5d58fc0c2b40df32f18a2b980\n     with:\n       plugin_slug: zizmor\n     secrets:"
+        },
+        {
+          "filename": ".github/workflows/nightly.yml",
+          "status": "modified",
+          "patch": "@@ -20,7 +20,7 @@ permissions:\n   contents: read\n jobs:\n   nightly:\n-    uses: unified-systems-com/tap/.github/workflows/plugin-nightly.yml@1ffb2417032350ec1d31f0af400c25b225ee66ca\n+    uses: unified-systems-com/tap/.github/workflows/plugin-nightly.yml@57505751b27900e5d58fc0c2b40df32f18a2b980\n     # REQUIRED on this job. GitHub checks every job of a called workflow — and of the workflows\n     # IT calls — against this grant BEFORE starting anything, so a scope missing here fails the\n     # whole run at startup with zero jobs and no log. `security-events: write` is plugin-ci's"
+        },
+        {
+          "filename": ".github/workflows/release-sbom.yml",
+          "status": "modified",
+          "patch": "@@ -24,6 +24,6 @@ jobs:\n       contents: read\n       id-token: write\n       attestations: write\n-    uses: unified-systems-com/tap/.github/workflows/plugin-release-sbom.yml@1ffb2417032350ec1d31f0af400c25b225ee66ca # core main 2026-09-02 — pinned like ci.yml: the release/attestation lane must not ride a mutable ref\n+    uses: unified-systems-com/tap/.github/workflows/plugin-release-sbom.yml@57505751b27900e5d58fc0c2b40df32f18a2b980 # core main 2026-09-02 — pinned like ci.yml: the release/attestation lane must not ride a mutable ref\n     with:\n       plugin_slug: zizmor"
+        }
+      ]
+    },
+    "workflow_main_pin": {
+      "description": "Fork-bot Renovate: `@main` pinned to a sha with no comment added, plus two sha bumps. tap-plugin-administrivia#20 (tap-renovate-remote).",
+      "files": [
+        {
+          "filename": ".github/workflows/ci.yml",
+          "status": "modified",
+          "patch": "@@ -27,7 +27,7 @@ jobs:\n       security-events: write\n     # tap#365 / PR# 373 - tap: plugin-ci fails closed and tests the declared floor. Move\n     # this pin to the SHA of tap main once PR# 373 merges (Renovate does not track it).\n-    uses: unified-systems-com/tap/.github/workflows/plugin-ci.yml@1ffb2417032350ec1d31f0af400c25b225ee66ca\n+    uses: unified-systems-com/tap/.github/workflows/plugin-ci.yml@57505751b27900e5d58fc0c2b40df32f18a2b980\n     with:\n       plugin_slug: administrivia\n     secrets:"
+        },
+        {
+          "filename": ".github/workflows/nightly.yml",
+          "status": "modified",
+          "patch": "@@ -20,7 +20,7 @@ permissions:\n   contents: read\n jobs:\n   nightly:\n-    uses: unified-systems-com/tap/.github/workflows/plugin-nightly.yml@1ffb2417032350ec1d31f0af400c25b225ee66ca\n+    uses: unified-systems-com/tap/.github/workflows/plugin-nightly.yml@57505751b27900e5d58fc0c2b40df32f18a2b980\n     # REQUIRED on this job. GitHub checks every job of a called workflow — and of the workflows\n     # IT calls — against this grant BEFORE starting anything, so a scope missing here fails the\n     # whole run at startup with zero jobs and no log. `security-events: write` is plugin-ci's"
+        },
+        {
+          "filename": ".github/workflows/release-sbom.yml",
+          "status": "modified",
+          "patch": "@@ -24,6 +24,6 @@ jobs:\n       contents: read\n       id-token: write\n       attestations: write\n-    uses: unified-systems-com/tap/.github/workflows/plugin-release-sbom.yml@main\n+    uses: unified-systems-com/tap/.github/workflows/plugin-release-sbom.yml@57505751b27900e5d58fc0c2b40df32f18a2b980\n     with:\n       plugin_slug: administrivia"
+        }
+      ]
+    },
+    "workflow_main_pin_comment": {
+      "description": "App-era Renovate: `@main` pinned to a sha with a `# main` comment added. tap-plugin-github-core#182 (app/tap-renovate).",
+      "files": [
+        {
+          "filename": ".github/workflows/release-sbom.yml",
+          "status": "modified",
+          "patch": "@@ -24,6 +24,6 @@ jobs:\n       contents: read\n       id-token: write\n       attestations: write\n-    uses: unified-systems-com/tap/.github/workflows/plugin-release-sbom.yml@main\n+    uses: unified-systems-com/tap/.github/workflows/plugin-release-sbom.yml@57a7cb4878255385528c4d91f689248a5d6e84b0 # main\n     with:\n       plugin_slug: github_core"
+        }
+      ]
+    },
+    "workflow_tag_to_sha": {
+      "description": "App-era Renovate helpers:pinGitHubActionDigests: `@v7` becomes `@<sha> # v7`, including a line with a second comment. tap#24 (app/tap-renovate).",
+      "files": [
+        {
+          "filename": ".github/workflows/all-plugins.yml",
+          "status": "modified",
+          "patch": "@@ -97,7 +97,7 @@ jobs:\n     env:\n       COMPOSE_FILE: docker-compose.yml:docker-compose.ci.yml\n     steps:\n-      - uses: actions/checkout@v7\n+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7\n \n       # All plugin repos are public (2026-08-08) — git-install is anonymous, no PAT.\n       # (Replaces the host tap_secrets symlink, a broken link on a runner.)\n@@ -110,9 +110,9 @@ jobs:\n       # (base image, uv deps, apt) don't rebuild every run. Each shard runs on its own\n       # runner and rebuilds from the shared warm cache (~24s); concurrent cache writes\n       # to identical layer keys are idempotent, so per-shard build needs no registry.\n-      - uses: docker/setup-buildx-action@v4\n+      - uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4\n       - name: Build web image (GHA layer cache)\n-        uses: docker/build-push-action@v7\n+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7\n         with:\n           context: .\n           load: true\n@@ -199,16 +199,16 @@ jobs:\n     env:\n       COMPOSE_FILE: docker-compose.yml:docker-compose.ci.yml\n     steps:\n-      - uses: actions/checkout@v7\n+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7\n       # All plugin repos are public (2026-08-08) — git-install is anonymous, no PAT.\n       # (Replaces the host tap_secrets symlink, a broken link on a runner.)\n       - name: Provide empty secrets root\n         run: |\n           rm -f tap_secrets\n           mkdir -p tap_secrets\n-      - uses: docker/setup-buildx-action@v4\n+      - uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4\n       - name: Build web image (GHA layer cache)\n-        uses: docker/build-push-action@v7\n+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7\n         with:\n           context: .\n           load: true\n@@ -242,7 +242,7 @@ jobs:\n       # runner workspace directly — upload-artifact picks it up with no docker cp.\n       - name: Full lane + store durations (unsharded)\n         run: docker compose --env-file .env exec -T web sh -c 'cd /app && uv run pytest -n 4 --store-durations --durations-path /app/.test_durations'\n-      - uses: actions/upload-artifact@v7\n+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7\n         with:\n           name: test-durations\n           path: .test_durations"
+        },
+        {
+          "filename": ".github/workflows/plugin-ci.yml",
+          "status": "modified",
+          "patch": "@@ -89,20 +89,20 @@ jobs:\n     timeout-minutes: 10\n     steps:\n       - name: Checkout core harness (${{ inputs.harness_repo }}@${{ inputs.harness_ref }})\n-        uses: actions/checkout@v7\n+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7\n         with:\n           repository: ${{ inputs.harness_repo }}\n           ref: ${{ inputs.harness_ref }}\n           token: ${{ secrets.harness_pat || github.token }}\n           path: _harness\n \n       - name: Checkout plugin (${{ inputs.plugin_repo || github.repository }})\n-        uses: actions/checkout@v7\n+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7\n         with:\n           repository: ${{ inputs.plugin_repo || github.repository }}\n           path: plugin\n \n-      - uses: astral-sh/setup-uv@v9.0.0\n+      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0\n \n       # Structure-level validation needs only pure-python core modules\n       # (tap_plugins.manifest / tap.core_version / tap.plugin_deps / tap.jsonfiles),\n@@ -138,7 +138,7 @@ jobs:\n       COMPOSE_FILE: docker-compose.yml:docker-compose.ci.yml\n     steps:\n       - name: Checkout core harness (${{ inputs.harness_repo }}@${{ inputs.harness_ref }})\n-        uses: actions/checkout@v7\n+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7\n         with:\n           repository: ${{ inputs.harness_repo }}\n           ref: ${{ inputs.harness_ref }}\n@@ -148,7 +148,7 @@ jobs:\n       # (the core dir) carries it; the caller's boot profile installs it editable\n       # from this path (source { type = \"editable\", path = \"_external/<slug>\" }).\n       - name: Checkout plugin into the harness tree\n-        uses: actions/checkout@v7\n+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7\n         with:\n           repository: ${{ inputs.plugin_repo || github.repository }}\n           path: _external/${{ inputs.plugin_slug }}\n@@ -196,9 +196,9 @@ jobs:\n           }\n           JSON\n \n-      - uses: docker/setup-buildx-action@v4\n+      - uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4\n       - name: Build web image (GHA layer cache)\n-        uses: docker/build-push-action@v7\n+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7\n         with:\n           context: .\n           load: true"
+        },
+        {
+          "filename": ".github/workflows/product-lines.yml",
+          "status": "modified",
+          "patch": "@@ -92,7 +92,7 @@ jobs:\n     env:\n       GITLEAKS_VERSION: \"8.30.1\"\n     steps:\n-      - uses: actions/checkout@v7\n+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7\n         with:\n           # The gate scans the tree, not history — but a shallow clone also breaks the\n           # `git`-mode fallback, so keep full history available for manual re-runs.\n@@ -125,16 +125,16 @@ jobs:\n       # Name of the per-worker clone-source template built below (in-container).\n       TAP_TEST_DB_TEMPLATE: tap_test_template\n     steps:\n-      - uses: actions/checkout@v7\n+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7\n \n       - name: Provide empty secrets root\n         run: |\n           rm -f tap_secrets\n           mkdir -p tap_secrets\n \n-      - uses: docker/setup-buildx-action@v4\n+      - uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4\n       - name: Build web image (GHA layer cache)\n-        uses: docker/build-push-action@v7\n+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7\n         with:\n           context: .\n           load: true"
+        },
+        {
+          "filename": ".github/workflows/publish-images.yml",
+          "status": "modified",
+          "patch": "@@ -59,19 +59,19 @@ jobs:\n           - arch: arm64\n             runner: ubuntu-24.04-arm\n     steps:\n-      - uses: actions/checkout@v7\n+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7\n         with:\n           persist-credentials: false  # build needs the tree, not a token in .git config\n       # guard-allow: req-cicd-runner-least-privilege — the docker/* steps ARE the write this\n       # job exists for (verified-creator tier); nothing else shares the job's packages:write.\n-      - uses: docker/setup-buildx-action@v4\n-      - uses: docker/login-action@v4\n+      - uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4\n+      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4\n         with:\n           registry: ${{ env.REGISTRY }}\n           username: ${{ github.actor }}\n           password: ${{ secrets.GITHUB_TOKEN }}\n       - name: Build and push (${{ matrix.arch }})\n-        uses: docker/build-push-action@v7\n+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7\n         with:\n           context: .\n           file: ${{ matrix.dockerfile }}\n@@ -97,7 +97,7 @@ jobs:\n       matrix:\n         image: [tap-web, tap-db]\n     steps:\n-      - uses: docker/login-action@v4\n+      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4\n         with:\n           registry: ${{ env.REGISTRY }}\n           username: ${{ github.actor }}\n@@ -113,7 +113,7 @@ jobs:\n           digest=\"$(docker buildx imagetools inspect \"${ref}:latest\" --format '{{json .Manifest}}' | jq -r .digest)\"\n           echo \"digest=${digest}\" >> \"$GITHUB_OUTPUT\"\n       - name: Attest build provenance\n-        uses: actions/attest-build-provenance@v4\n+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4\n         with:\n           subject-name: ${{ env.REGISTRY }}/${{ env.OWNER }}/${{ matrix.image }}\n           subject-digest: ${{ steps.merge.outputs.digest }}\n@@ -142,7 +142,7 @@ jobs:\n       matrix:\n         image: [tap-web, tap-db]\n     steps:\n-      - uses: actions/checkout@v7   # for .trivyignore\n+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1   # v7   # for .trivyignore\n         with:\n           persist-credentials: false  # never leave the job token readable in .git config\n       # guard-allow: req-cicd-runner-least-privilege — scanner needs no token; this job's\n@@ -155,7 +155,7 @@ jobs:\n           output: trivy-${{ matrix.image }}.sarif\n           exit-code: \"0\"   # report-only — the gate flip changes this pre-push, not here\n       - name: Upload SARIF to code scanning\n-        uses: github/codeql-action/upload-sarif@v4\n+        uses: github/codeql-action/upload-sarif@5595ccaf912efad79be6eef63a5619ff05969be3 # v4\n         with:\n           sarif_file: trivy-${{ matrix.image }}.sarif\n           category: trivy-${{ matrix.image }}"
+        },
+        {
+          "filename": ".github/workflows/renovate.yml",
+          "status": "modified",
+          "patch": "@@ -48,12 +48,12 @@ jobs:\n     steps:\n       - name: Mint app token\n         id: app\n-        uses: actions/create-github-app-token@v3\n+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3\n         with:\n           app-id: ${{ secrets.RENOVATE_APP_ID }}\n           private-key: ${{ secrets.RENOVATE_APP_PRIVATE_KEY }}\n       - name: Run Renovate\n-        uses: renovatebot/github-action@v46.2.1\n+        uses: renovatebot/github-action@e09d604f8f803bb527bd8321ed5be06c460b8682 # v46.2.2\n         with:\n           token: ${{ steps.app.outputs.token }}\n         env:"
+        },
+        {
+          "filename": ".github/workflows/trivy-nightly.yml",
+          "status": "modified",
+          "patch": "@@ -34,7 +34,7 @@ jobs:\n       matrix:\n         image: [tap-web, tap-db]\n     steps:\n-      - uses: actions/checkout@v7   # for .trivyignore\n+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1   # v7   # for .trivyignore\n         with:\n           persist-credentials: false  # never leave the job token readable in .git config\n       # guard-allow: req-cicd-runner-least-privilege — scanner needs no token; this job's\n@@ -47,7 +47,7 @@ jobs:\n           output: trivy-${{ matrix.image }}.sarif\n           exit-code: \"0\"\n       - name: Upload SARIF to code scanning\n-        uses: github/codeql-action/upload-sarif@v4\n+        uses: github/codeql-action/upload-sarif@5595ccaf912efad79be6eef63a5619ff05969be3 # v4\n         with:\n           sarif_file: trivy-${{ matrix.image }}.sarif\n           category: trivy-${{ matrix.image }}"
+        }
+      ]
+    },
+    "workflow_version_comment": {
+      "description": "App-era Renovate: action sha bump whose `# v2` comment becomes `# v3`. tap#35 (app/tap-renovate).",
+      "files": [
+        {
+          "filename": ".github/workflows/release-please.yml",
+          "status": "modified",
+          "patch": "@@ -53,12 +53,12 @@ jobs:\n       prs_created: ${{ steps.rp.outputs.prs_created }}\n       prs: ${{ steps.rp.outputs.prs }}\n     steps:\n-      - uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349 # v2\n+      - uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3\n         id: app-token\n         with:\n           app-id: ${{ vars.TAP_RELEASE_PLEASE_APP_ID }}\n           private-key: ${{ secrets.TAP_RELEASE_PLEASE_APP_PRIVATE_KEY }}\n-      - uses: googleapis/release-please-action@5c625bfb5d1ff62eadeeb3772007f7f66fdcf071 # v4\n+      - uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5\n         id: rp\n         with:\n           token: ${{ steps.app-token.outputs.token }}\n@@ -95,7 +95,7 @@ jobs:\n           else\n             echo \"changed=true\" >> \"$GITHUB_OUTPUT\"\n           fi\n-      - uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349 # v2\n+      - uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3\n         if: steps.lockdiff.outputs.changed == 'true'\n         id: app-token\n         with:"
+        }
+      ]
+    },
+    "workflow_tag_to_tag": {
+      "description": "App-era Renovate: tag to tag (`@v5` to `@v7`), no sha. Refused: the new ref is not a sha. tap#19 (app/tap-renovate).",
+      "files": [
+        {
+          "filename": ".github/workflows/all-plugins.yml",
+          "status": "modified",
+          "patch": "@@ -97,7 +97,7 @@ jobs:\n     env:\n       COMPOSE_FILE: docker-compose.yml:docker-compose.ci.yml\n     steps:\n-      - uses: actions/checkout@v5\n+      - uses: actions/checkout@v7\n \n       # All plugin repos are public (2026-08-08) — git-install is anonymous, no PAT.\n       # (Replaces the host tap_secrets symlink, a broken link on a runner.)\n@@ -110,9 +110,9 @@ jobs:\n       # (base image, uv deps, apt) don't rebuild every run. Each shard runs on its own\n       # runner and rebuilds from the shared warm cache (~24s); concurrent cache writes\n       # to identical layer keys are idempotent, so per-shard build needs no registry.\n-      - uses: docker/setup-buildx-action@v3\n+      - uses: docker/setup-buildx-action@v4\n       - name: Build web image (GHA layer cache)\n-        uses: docker/build-push-action@v6\n+        uses: docker/build-push-action@v7\n         with:\n           context: .\n           load: true\n@@ -199,16 +199,16 @@ jobs:\n     env:\n       COMPOSE_FILE: docker-compose.yml:docker-compose.ci.yml\n     steps:\n-      - uses: actions/checkout@v5\n+      - uses: actions/checkout@v7\n       # All plugin repos are public (2026-08-08) — git-install is anonymous, no PAT.\n       # (Replaces the host tap_secrets symlink, a broken link on a runner.)\n       - name: Provide empty secrets root\n         run: |\n           rm -f tap_secrets\n           mkdir -p tap_secrets\n-      - uses: docker/setup-buildx-action@v3\n+      - uses: docker/setup-buildx-action@v4\n       - name: Build web image (GHA layer cache)\n-        uses: docker/build-push-action@v6\n+        uses: docker/build-push-action@v7\n         with:\n           context: .\n           load: true\n@@ -242,7 +242,7 @@ jobs:\n       # runner workspace directly — upload-artifact picks it up with no docker cp.\n       - name: Full lane + store durations (unsharded)\n         run: docker compose --env-file .env exec -T web sh -c 'cd /app && uv run pytest -n 4 --store-durations --durations-path /app/.test_durations'\n-      - uses: actions/upload-artifact@v4\n+      - uses: actions/upload-artifact@v7\n         with:\n           name: test-durations\n           path: .test_durations"
+        },
+        {
+          "filename": ".github/workflows/plugin-ci.yml",
+          "status": "modified",
+          "patch": "@@ -83,20 +83,20 @@ jobs:\n     timeout-minutes: 10\n     steps:\n       - name: Checkout core harness (${{ inputs.harness_repo }}@${{ inputs.harness_ref }})\n-        uses: actions/checkout@v5\n+        uses: actions/checkout@v7\n         with:\n           repository: ${{ inputs.harness_repo }}\n           ref: ${{ inputs.harness_ref }}\n           token: ${{ secrets.harness_pat || github.token }}\n           path: _harness\n \n       - name: Checkout plugin (${{ inputs.plugin_repo || github.repository }})\n-        uses: actions/checkout@v5\n+        uses: actions/checkout@v7\n         with:\n           repository: ${{ inputs.plugin_repo || github.repository }}\n           path: plugin\n \n-      - uses: astral-sh/setup-uv@v5\n+      - uses: astral-sh/setup-uv@v9.0.0\n \n       # Structure-level validation needs only pure-python core modules\n       # (tap_plugins.manifest / tap.core_version / tap.plugin_deps / tap.jsonfiles),\n@@ -132,7 +132,7 @@ jobs:\n       COMPOSE_FILE: docker-compose.yml:docker-compose.ci.yml\n     steps:\n       - name: Checkout core harness (${{ inputs.harness_repo }}@${{ inputs.harness_ref }})\n-        uses: actions/checkout@v5\n+        uses: actions/checkout@v7\n         with:\n           repository: ${{ inputs.harness_repo }}\n           ref: ${{ inputs.harness_ref }}\n@@ -142,7 +142,7 @@ jobs:\n       # (the core dir) carries it; the caller's boot profile installs it editable\n       # from this path (source { type = \"editable\", path = \"_external/<slug>\" }).\n       - name: Checkout plugin into the harness tree\n-        uses: actions/checkout@v5\n+        uses: actions/checkout@v7\n         with:\n           repository: ${{ inputs.plugin_repo || github.repository }}\n           path: _external/${{ inputs.plugin_slug }}\n@@ -190,9 +190,9 @@ jobs:\n           }\n           JSON\n \n-      - uses: docker/setup-buildx-action@v3\n+      - uses: docker/setup-buildx-action@v4\n       - name: Build web image (GHA layer cache)\n-        uses: docker/build-push-action@v6\n+        uses: docker/build-push-action@v7\n         with:\n           context: .\n           load: true"
+        },
+        {
+          "filename": ".github/workflows/product-lines.yml",
+          "status": "modified",
+          "patch": "@@ -92,7 +92,7 @@ jobs:\n     env:\n       GITLEAKS_VERSION: \"8.30.1\"\n     steps:\n-      - uses: actions/checkout@v4\n+      - uses: actions/checkout@v7\n         with:\n           # The gate scans the tree, not history — but a shallow clone also breaks the\n           # `git`-mode fallback, so keep full history available for manual re-runs.\n@@ -125,16 +125,16 @@ jobs:\n       # Name of the per-worker clone-source template built below (in-container).\n       TAP_TEST_DB_TEMPLATE: tap_test_template\n     steps:\n-      - uses: actions/checkout@v5\n+      - uses: actions/checkout@v7\n \n       - name: Provide empty secrets root\n         run: |\n           rm -f tap_secrets\n           mkdir -p tap_secrets\n \n-      - uses: docker/setup-buildx-action@v3\n+      - uses: docker/setup-buildx-action@v4\n       - name: Build web image (GHA layer cache)\n-        uses: docker/build-push-action@v6\n+        uses: docker/build-push-action@v7\n         with:\n           context: .\n           load: true"
+        },
+        {
+          "filename": ".github/workflows/publish-images.yml",
+          "status": "modified",
+          "patch": "@@ -59,15 +59,15 @@ jobs:\n           - arch: arm64\n             runner: ubuntu-24.04-arm\n     steps:\n-      - uses: actions/checkout@v5\n-      - uses: docker/setup-buildx-action@v3\n-      - uses: docker/login-action@v3\n+      - uses: actions/checkout@v7\n+      - uses: docker/setup-buildx-action@v4\n+      - uses: docker/login-action@v4\n         with:\n           registry: ${{ env.REGISTRY }}\n           username: ${{ github.actor }}\n           password: ${{ secrets.GITHUB_TOKEN }}\n       - name: Build and push (${{ matrix.arch }})\n-        uses: docker/build-push-action@v6\n+        uses: docker/build-push-action@v7\n         with:\n           context: .\n           file: ${{ matrix.dockerfile }}\n@@ -93,7 +93,7 @@ jobs:\n       matrix:\n         image: [tap-web, tap-db]\n     steps:\n-      - uses: docker/login-action@v3\n+      - uses: docker/login-action@v4\n         with:\n           registry: ${{ env.REGISTRY }}\n           username: ${{ github.actor }}\n@@ -109,7 +109,7 @@ jobs:\n           digest=\"$(docker buildx imagetools inspect \"${ref}:latest\" --format '{{json .Manifest}}' | jq -r .digest)\"\n           echo \"digest=${digest}\" >> \"$GITHUB_OUTPUT\"\n       - name: Attest build provenance\n-        uses: actions/attest-build-provenance@v3\n+        uses: actions/attest-build-provenance@v4\n         with:\n           subject-name: ${{ env.REGISTRY }}/${{ env.OWNER }}/${{ matrix.image }}\n           subject-digest: ${{ steps.merge.outputs.digest }}\n@@ -138,7 +138,7 @@ jobs:\n       matrix:\n         image: [tap-web, tap-db]\n     steps:\n-      - uses: actions/checkout@v5   # for .trivyignore\n+      - uses: actions/checkout@v7   # for .trivyignore\n       - name: Scan published image\n         uses: aquasecurity/trivy-action@v0.36.0\n         with:"
+        },
+        {
+          "filename": ".github/workflows/trivy-nightly.yml",
+          "status": "modified",
+          "patch": "@@ -34,7 +34,7 @@ jobs:\n       matrix:\n         image: [tap-web, tap-db]\n     steps:\n-      - uses: actions/checkout@v5   # for .trivyignore\n+      - uses: actions/checkout@v7   # for .trivyignore\n       - name: Scan published image\n         uses: aquasecurity/trivy-action@v0.36.0\n         with:"
+        }
+      ]
+    },
+    "boot_commit": {
+      "description": "App-era Renovate custom.regex manager: boot-record `rev` + `commit` moved together. tap#647 (app/tap-renovate).",
+      "files": [
+        {
+          "filename": "boot/core_ci.boot.json",
+          "status": "modified",
+          "patch": "@@ -63,8 +63,8 @@\n         \"source\": {\n           \"type\": \"git\",\n           \"url\": \"https://github.com/unified-systems-com/tap-plugin-compliance-core\",\n-          \"rev\": \"v0.3.0\",\n-          \"commit\": \"10871675ff1c67bfac0ca61d90ee12c507fd76f4\"\n+          \"rev\": \"v0.4.0\",\n+          \"commit\": \"e5464e4dd87758d41552d45df42c0303b0de48e3\"\n         },\n         \"note\": \"Canary dependency: github_core >=v0.10.0 mints compliance_core__compliance_finding for every scanner alert and DETAILS_FINDING targets its type (github-core#89). Same pin as test_all; listed before github_core (tap#647, tap#675).\"\n       },\n@@ -74,8 +74,8 @@\n         \"source\": {\n           \"type\": \"git\",\n           \"url\": \"https://github.com/unified-systems-com/tap-plugin-github-core\",\n-          \"rev\": \"v0.10.0\",\n-          \"commit\": \"697e6af7ad85ae980a068e1c9882927875c93381\"\n+          \"rev\": \"v0.12.1\",\n+          \"commit\": \"d157f3f1d457b44dbb44d46c5944578d3f221a1b\"\n         },\n         \"note\": \"Canary: the flagship consumer plugin (the git-serious product's substrate). Its declared dependency closure is the only non-fixture set this profile may carry.\"\n       }"
+        },
+        {
+          "filename": "boot/test_all.boot.json",
+          "status": "modified",
+          "patch": "@@ -87,8 +87,8 @@\n         \"source\": {\n           \"type\": \"git\",\n           \"url\": \"https://github.com/unified-systems-com/tap-plugin-compliance-core\",\n-          \"rev\": \"v0.3.0\",\n-          \"commit\": \"10871675ff1c67bfac0ca61d90ee12c507fd76f4\"\n+          \"rev\": \"v0.4.0\",\n+          \"commit\": \"e5464e4dd87758d41552d45df42c0303b0de48e3\"\n         },\n         \"note\": \"Package-mode (tap_plugin.compliance_core). Install-only substrate: regime-agnostic compliance vocabulary (compliance_artifact + compliance_context in Phase A). fedramp_20x_ksi + samsite depend_on it \\u2014 listed before them so its types register first. No GRIFT population seed of its own.\"\n       },\n@@ -98,8 +98,8 @@\n         \"source\": {\n           \"type\": \"git\",\n           \"url\": \"https://github.com/unified-systems-com/tap-plugin-github-core\",\n-          \"rev\": \"v0.10.0\",\n-          \"commit\": \"697e6af7ad85ae980a068e1c9882927875c93381\"\n+          \"rev\": \"v0.12.1\",\n+          \"commit\": \"d157f3f1d457b44dbb44d46c5944578d3f221a1b\"\n         },\n         \"note\": \"Package-mode (tap_plugin.github_core). Tier-0 PyYAML dep (uv resolves at install). GitHub repo landing page; seeded in population.\"\n       },"
+        }
+      ]
+    },
+    "dockerfile_digest": {
+      "description": "App-era Renovate: root Dockerfile `FROM ...@sha256` digest moves on two stages. tap#183 root Dockerfile only (app/tap-renovate).",
+      "files": [
+        {
+          "filename": "Dockerfile",
+          "status": "modified",
+          "patch": "@@ -38,7 +38,7 @@ ARG TAP_FIPS=1\n # nothing COPYs from it in the fips-0 path). We run the frozen validated 3.0.9 module against\n # the base's MODERN libcrypto at runtime — OpenSSL guarantees a certified fips.so is\n # binary-compatible with any LATER libcrypto, so OpenSSL 3.0's LTS-EOL is irrelevant (D4).\n-FROM cgr.dev/chainguard/wolfi-base:latest@sha256:a31344ab2cb8618db84f535eec56f76f6178b142cb92cb2e48676cc2dcebea72 AS ossl-builder\n+FROM cgr.dev/chainguard/wolfi-base:latest@sha256:19f7a7b40a11c435311e3784bd134c6b6f19677462440da48f96d5c84eefd669 AS ossl-builder\n # Wolfi's apk repo flakes under load (observed 2026-08-16: HTTP 403s mid-install;\n # 2026-08-20: fetch error on one package) — bounded retry with backoff, failing\n # closed after 3 attempts. apk add is idempotent across retries.\n@@ -53,7 +53,7 @@ RUN ./Configure enable-fips && make -j\"$(nproc)\" && make install_fips\n # ============================================================================\n # base — the common runtime (identical for both FIPS modes)\n # ============================================================================\n-FROM cgr.dev/chainguard/wolfi-base:latest@sha256:a31344ab2cb8618db84f535eec56f76f6178b142cb92cb2e48676cc2dcebea72 AS base\n+FROM cgr.dev/chainguard/wolfi-base:latest@sha256:19f7a7b40a11c435311e3784bd134c6b6f19677462440da48f96d5c84eefd669 AS base\n \n # Prevents Python from writing .pyc bytecode files to disk (waste + stale-cache risk).\n ENV PYTHONDONTWRITEBYTECODE=1"
+        }
+      ]
+    },
+    "dockerfile_copy_from": {
+      "description": "App-era Renovate: `COPY --from=ghcr.io/astral-sh/uv:<tag>@sha256:<digest>` tag and digest move. tap#148 (app/tap-renovate).",
+      "files": [
+        {
+          "filename": "Dockerfile",
+          "status": "modified",
+          "patch": "@@ -109,7 +109,7 @@ RUN for i in 1 2 3; do \\\n     done\n \n # Copy the UV binary from the official UV image (no package manager needed).\n-COPY --from=ghcr.io/astral-sh/uv:0.12.5@sha256:e85be844203885286c60ffad8a858d48afb6c5a5c237ca0e67f12e74b8f174b1 /uv /uvx /bin/\n+COPY --from=ghcr.io/astral-sh/uv:0.12.6@sha256:88bc6eb1ccd4b82efd0e1b530caffabddf50dc2bf612e66c14ea25b8ee8a4d3d /uv /uvx /bin/\n \n # Dependency installation runs at container START via docker/entrypoint.sh, NOT at image\n # build: the compose bind mount `.:/app` overrides /app and /app/.venv + /root/.cache/uv are"
+        }
+      ]
+    },
+    "dockerfile_tag": {
+      "description": "App-era Renovate: node 22-alpine to 24-alpine, tag and digest move, same image and stage. tap#125 root Dockerfile only (app/tap-renovate).",
+      "files": [
+        {
+          "filename": "Dockerfile",
+          "status": "modified",
+          "patch": "@@ -152,7 +152,7 @@ RUN python3 /seed_manifest.py generate /root/.cache/uv /root/uv-cache-seed.manif\n # uv.lock). Digest-pinned node from the credential-free ECR mirror\n # (req-cicd-base-image-sourcing); bump procedure = the FROM-lines note above.\n # ============================================================================\n-FROM public.ecr.aws/docker/library/node:22-alpine@sha256:c610fcdfb1d5b4740dd70c284ed3cb16bb857e0f7166196e36a5501df7a3aa32 AS js-vendor\n+FROM public.ecr.aws/docker/library/node:24-alpine@sha256:d32cdf619f63fe0471182d08996dd516c6275bb5fd31ae06e55a570bd9e1ad43 AS js-vendor\n WORKDIR /vendor\n COPY package.json package-lock.json ./\n # npm runs UNPRIVILEGED (defense-in-depth on top of --ignore-scripts: a"
+        }
+      ]
+    },
+    "package_json": {
+      "description": "App-era Renovate: three exact-pinned npm dependencies moved inside \"dependencies\". tap#267 package.json only; its package-lock.json needs a human look (app/tap-renovate).",
+      "files": [
+        {
+          "filename": "package.json",
+          "status": "modified",
+          "patch": "@@ -4,9 +4,9 @@\n   \"private\": true,\n   \"description\": \"TAP's vendored browser-library closure (req-cicd-sbom-13, adopt-native-distribution): these exact-pinned npm packages are fetched by the js-vendor Docker build stage (npm ci --ignore-scripts) and staged into /opt/tap-static-vendor \\u2014 the bytes never live in git. package-lock.json is the integrity + SBOM seam (the image scan catalogs it); Renovate updates ride this file like any other lockfile.\",\n   \"dependencies\": {\n-    \"cytoscape\": \"3.30.4\",\n+    \"cytoscape\": \"3.34.2\",\n     \"echarts\": \"6.1.0\",\n-    \"htmx.org\": \"2.0.4\",\n-    \"tabulator-tables\": \"6.3.0\"\n+    \"htmx.org\": \"2.0.10\",\n+    \"tabulator-tables\": \"6.5.2\"\n   }\n }"
+        }
+      ]
+    },
+    "pyproject_deps": {
+      "description": "App-era Renovate pep621: dev dependency range bumps. tap#21 pyproject.toml only; the uv.lock beside it needs a human look (app/tap-renovate).",
+      "files": [
+        {
+          "filename": "pyproject.toml",
+          "status": "modified",
+          "patch": "@@ -97,7 +97,7 @@ dev = [\n     \"black>=24.0,<27\",\n     # Linting\n     # Ruff is a fast Python linter written in Rust, replaces flake8/isort/etc\n-    \"ruff>=0.8,<0.16\",\n+    \"ruff>=0.16,<0.17\",\n     # Type Checking\n     # Mypy catches type errors before runtime\n     # django-stubs provides type hints for Django's internals\n@@ -107,7 +107,7 @@ dev = [\n     # own Renovate range-bump PR with a deliberate fix-vs-baseline triage —\n     # never inside a routine lockfile refresh. (Same treatment as ruff, whose\n     # 0.x bound achieves this naturally.)\n-    \"mypy>=1.13,<1.20\",\n+    \"mypy>=1.20,<1.21\",\n     \"django-stubs>=5.1,<6\",\n     # Testing\n     # pytest is the modern Python test framework"
+        }
+      ]
+    },
+    "release_plugin": {
+      "description": "release-please: plugin release PR, manifest + new CHANGELOG.md + tap-plugin.toml plugin_version. tap-plugin-github-core#183 (app/tap-release-please).",
+      "files": [
+        {
+          "filename": ".release-please-manifest.json",
+          "status": "modified",
+          "patch": "@@ -1,3 +1,3 @@\n {\n-  \".\": \"0.12.1\"\n+  \".\": \"0.12.2\"\n }"
+        },
+        {
+          "filename": "CHANGELOG.md",
+          "status": "added",
+          "patch": "@@ -0,0 +1,9 @@\n+# Changelog\n+\n+## [0.12.2](https://github.com/unified-systems-com/tap-plugin-github-core/compare/v0.12.1...v0.12.2) (2026-09-26)\n+\n+\n+### Bug Fixes\n+\n+* **ci:** drop the nightly's latest-release row; run vs core main only [via bom-bom] ([b58d6e5](https://github.com/unified-systems-com/tap-plugin-github-core/commit/b58d6e501720ab204732b65f5b09adbb0ff91dc2))\n+* **ci:** drop the nightly's latest-release row; the nightly runs vs core main only ([3493379](https://github.com/unified-systems-com/tap-plugin-github-core/commit/34933790120b60cf16b118da163deb46fbce244f))"
+        },
+        {
+          "filename": "tap_plugin/github_core/tap-plugin.toml",
+          "status": "modified",
+          "patch": "@@ -1,5 +1,5 @@\n manifest_version = \"0\"\n-plugin_version = \"0.12.1\" # x-release-please-version\n+plugin_version = \"0.12.2\" # x-release-please-version\n # 0.2.1 (2026-09-22): the first core release carrying tap_cares.collectors.run_with_ceiling\n # (unified-systems-com/tap#753, unified-systems-com/tap#750) — this PR's own _under_ceiling\n # de-duplicates onto it, so the floor names the release that actually has the symbol."
+        }
+      ]
+    },
+    "release_tap": {
+      "description": "release-please: tap release PR, manifest + CHANGELOG.md + pyproject version + .env TAP_VERSION + uv.lock (the project's own version line). tap#58 (app/tap-release-please).",
+      "files": [
+        {
+          "filename": ".env",
+          "status": "modified",
+          "patch": "@@ -28,7 +28,7 @@ TAP_GRID_ID=019c2a9a-cfdb-768e-82c5-7a037556064d\n # image's migrations meet a db image that does not provide what they expect.\n #\n # Bumped automatically by release-please when a release PR merges; do not hand-edit.\n-TAP_VERSION=0.1.2 # x-release-please-version\n+TAP_VERSION=0.1.3 # x-release-please-version\n \n # Derived from TAP_VERSION so the version literal lives exactly once.\n TAP_WEB_IMAGE=ghcr.io/unified-systems-com/tap-web:${TAP_VERSION}"
+        },
+        {
+          "filename": ".release-please-manifest.json",
+          "status": "modified",
+          "patch": "@@ -1,3 +1,3 @@\n {\n-  \".\": \"0.1.2\"\n+  \".\": \"0.1.3\"\n }"
+        },
+        {
+          "filename": "CHANGELOG.md",
+          "status": "modified",
+          "patch": "@@ -1,5 +1,37 @@\n # Changelog\n \n+## [0.1.3](https://github.com/unified-systems-com/tap/compare/v0.1.2...v0.1.3) (2026-08-20)\n+\n+\n+### Features\n+\n+* **cicd:** consumers pin a version instead of tracking :latest ([60f2093](https://github.com/unified-systems-com/tap/commit/60f2093ec7e2aab38bcaf435bb32f66e86165eff))\n+* **cicd:** digest-threaded publish pipeline (req-cicd-supply-chain-provenance-1) ([0c4c953](https://github.com/unified-systems-com/tap/commit/0c4c953f3c09b97a81d38bb7c66c9582cea8cc17))\n+* **dco:** remediation commits — certify retroactively without rewriting history ([026b1f9](https://github.com/unified-systems-com/tap/commit/026b1f9e3c6a6b957655a0e25bfc475271b7e36d))\n+* **grid:** EntityType.kind — discriminate node vs edge in the type catalog ([0ab001a](https://github.com/unified-systems-com/tap/commit/0ab001aeeb75073ecebe186849425ae3c2163eed))\n+* **health:** probe selection sets — liveness/readiness, declared and mandatory ([fdfe4c3](https://github.com/unified-systems-com/tap/commit/fdfe4c3eb21dba17824d71b9c455e7a5f8ed7169))\n+* **health:** serving, grid-table and plugins-loaded probes ([3394ad0](https://github.com/unified-systems-com/tap/commit/3394ad0e9eb2155b4a8e0c56556fa2296db0731b))\n+* **policy:** CONTRIBUTING + DCO land as approved policy; sign-off enforcement ON ([90d5a14](https://github.com/unified-systems-com/tap/commit/90d5a14ad295efd345836812a9e235b0ea9e6214))\n+\n+\n+### Bug Fixes\n+\n+* **auth:** enrollment link origin IS the ceremony origin (sweep S2) ([3cca3ac](https://github.com/unified-systems-com/tap/commit/3cca3acf313cc8ca5a08d86466c1a79632c24973))\n+* **cicd:** base compose is pull-only — building is an explicit opt-in overlay ([fdd6139](https://github.com/unified-systems-com/tap/commit/fdd61399fe3598b246226c895b1cef6631cb09f0))\n+* **cicd:** CI rides tap-db:latest — the version pin is a consumer contract ([f734c2f](https://github.com/unified-systems-com/tap/commit/f734c2f2f7ed2b50ee24f6ba44433dfe9cc589f5))\n+* **cicd:** release-commit publishes survive newest-main-wins cancellation ([2dc00c1](https://github.com/unified-systems-com/tap/commit/2dc00c1efd89585a3d7511f500437d6c130548c1))\n+* nine duplicate-fact collapses + four boot/auth precision fixes ([0becf1a](https://github.com/unified-systems-com/tap/commit/0becf1a34c25d750f44c9c3f7289953da724da06))\n+\n+\n+### Documentation\n+\n+* **grid:** backlog req for first-party types in the type catalog ([3a3704a](https://github.com/unified-systems-com/tap/commit/3a3704a563b9c63b4a2da3ca56fb68a014e09ab1))\n+* **grid:** sharpen the stale-catalog-rows gap — accumulated state, not fresh-instance behaviour ([7f75fe6](https://github.com/unified-systems-com/tap/commit/7f75fe6ea719175a302da96b01d4979b9f12013d))\n+* **health:** correct the entity-type catalog non-goal — measured causes, not a classification issue ([2ea3117](https://github.com/unified-systems-com/tap/commit/2ea31176ccd6f10812e17bf5c4ebbca262171830))\n+* **misc:** duplicate-derivation backlog — the open ~30, with the detectors ([0baae29](https://github.com/unified-systems-com/tap/commit/0baae2949357de413af44bf53cefe2309a14efac))\n+* **plugins:** lifecycle v1 — define the departure contract (req-plugin-lifecycle-v1-departure) ([2852990](https://github.com/unified-systems-com/tap/commit/2852990953e989e8b81d5e69e4f001b18f2bf02b))\n+* **policy:** correct the approval provenance recorded in 90d5a14a ([a28419b](https://github.com/unified-systems-com/tap/commit/a28419bf89fa5c951aacd86e5822157510e9022f))\n+\n ## [0.1.2](https://github.com/unified-systems-com/tap/compare/v0.1.1...v0.1.2) (2026-08-12)\n \n "
+        },
+        {
+          "filename": "pyproject.toml",
+          "status": "modified",
+          "patch": "@@ -5,7 +5,7 @@\n \n [project]\n name = \"tap\"\n-version = \"0.1.2\"\n+version = \"0.1.3\"\n description = \"The Analogy Platform - a graph-based systems mastery platform\"\n readme = \"README.md\"\n # SPDX identifier (PEP 639). The authoritative text is the LICENSE file at the repo"
+        },
+        {
+          "filename": "uv.lock",
+          "status": "modified",
+          "patch": "@@ -1155,7 +1155,7 @@ wheels = [\n \n [[package]]\n name = \"tap\"\n-version = \"0.1.2\"\n+version = \"0.1.3\"\n source = { virtual = \".\" }\n dependencies = [\n     { name = \"croniter\" },"
+        }
+      ]
+    }
+  }
+}

