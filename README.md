@@ -20,10 +20,12 @@ comment, or run workflows against it.
 | `.github/workflows/renovate.yml` | Renovate in fork mode. Pilot: manual dispatch only, one repository per run (`only`, default `tap-plugin-github-core`); the daily schedule returns when the pilot ends |
 | `renovate/global.js` | Renovate's global config: the explicit repository list, the bot identity (from environment variables), PR limits, fork mode, no onboarding, no dashboard |
 | `renovate/preset.js` | The shared repository config every listed repository without its own gets, including tap's boot-record pin manager |
+| `renovate/boot-records/` | The digest refresh Renovate runs after bumping an in-package boot record: `refresh.py`, tap's `tap.boot_records` vendored at a pinned commit (`tap/`, `tap-vendor.json`), `vendor.py` to check or move the pin, and its offline tests |
 | `.github/workflows/release-please.yml` | release-please stage 1 (`release-pr --fork`) over `RELEASE_REPOS`. Pilot: manual dispatch only |
 | `scripts/cut-release.sh` | release-please stage 2 (`github-release`), run by the maintainer. Dry run by default |
 | `scripts/approve_bot_runs.py` | Approves the fork bot's PR workflow runs that wait for "Approve and run", by fixed rules. Dry run by default |
 | `tests/` | Offline tests for `approve_bot_runs.py` (fixture JSON, no network): `python3 -m unittest discover -s tests` |
+| `renovate/boot-records/test_refresh.py` | Offline tests for the digest refresh and the vendored pin: `python3 -m unittest discover -s renovate/boot-records` (Python 3.11 or later, for `tomllib`) |
 | `release-please/package.json`, `package-lock.json` | Pin the release-please CLI and its whole dependency closure, for CI and for the script |
 | `.github/CODEOWNERS` | Every path needs the owner's review |
 
@@ -89,7 +91,9 @@ upstream's `.github/workflows` files. A fine-grained token is limited to reposit
 (or the owner's orgs) own, so, per GitHub's documentation, it cannot open the PR upstream; that
 limit is not tested here.
 
-**What can run with the token.** For Renovate, the Renovate container, pinned by image digest.
+**What can run with the token.** For Renovate, the Renovate container, pinned by image digest,
+and inside it one post-upgrade command, `renovate/boot-records/refresh.py` (see "Boot-record
+digests").
 For release-please, the CLI, installed with `npm ci --ignore-scripts` from a lockfile that pins
 every package by integrity hash, plus the runner's `gh` for the pre-checks. Every action is pinned
 by full commit SHA, and every workflow starts from `permissions: {}` with a read-only
@@ -207,6 +211,48 @@ The line shapes are those of the fleet's merged Renovate and release-please PRs;
 there is refused. Widening `ALLOWED_PATHS`, `CONTENT_RULES` or any other rule is the code owner's
 decision. The script uses only the
 Python standard library and your `gh` login; it calls `gh` with an argument list, never a shell.
+
+## Boot-record digests
+
+A plugin's in-package boot record, `tap_plugin/<slug>/boot/<name>.boot.json`, is guarded by a
+sha256 in the package's `tap_plugin/<slug>/tap-plugin.toml` (`[[boot.records]]`), and the plugin's
+checks (`validate_plugin`, plugin-ci conformance) fail when the two disagree. Renovate's boot-record
+manager bumps a pin's `rev` and `commit` together, which moves that digest. So the preset attaches
+a `postUpgradeTasks` step to boot-record updates: after the bump, Renovate runs
+
+```sh
+python3 -I /github-action/boot-records/refresh.py
+```
+
+in its checkout of the repository, and commits the rewritten `tap-plugin.toml` with the record
+(`fileFilters: tap_plugin/*/tap-plugin.toml`; nothing else the command touches is committed).
+
+- **Same derivation as tap.** `refresh.py` does not compute digests itself. It imports
+  `tap.boot_records`, copied byte for byte from tap at the commit named in
+  `renovate/boot-records/tap-vendor.json`, and calls its `refresh()` and `check()` on a temporary
+  root holding `plugins/<repo> -> <checkout>`, which is the layout that module discovers. It
+  checks each vendored file against its sha256 in `tap-vendor.json` before importing it, and
+  exits non-zero if any digest still disagrees afterwards, so Renovate reports an artifact error
+  on the PR instead of committing a digest that is wrong.
+- **No network, no install.** The module is standard library only, and the pinned Renovate image
+  ships Python 3.12. The directory is mounted read-only into the container beside `preset.js`
+  (`docker-volumes` in `renovate.yml`).
+- **The allowlist.** `allowedCommands` in `renovate/global.js` is a global-only option; it allows
+  exactly `^python3 -I /github-action/boot-records/refresh\.py$` and nothing else, so no repository's
+  own config can run another command. Commands run without a shell
+  (`allowShellExecutorForPostUpgradeCommands: false`), and Renovate passes a child command only a
+  short list of basic environment variables, not its token. `-I` keeps `PYTHONPATH`, user site
+  packages and the checkout itself off the import path.
+- **Keeping the pin current.** `renovate/boot-records/vendor.py` (your `gh` login, read-only)
+  compares the vendored files with tap at the pinned commit, and says when tap's `main` has moved
+  them (exit 3). To move the pin, read the change in tap, then
+  `renovate/boot-records/vendor.py --update <full commit sha>`; it rewrites the files and their
+  sha256s in `tap-vendor.json` from tap itself, never by hand.
+- **The PR this produces** changes a `"rev"`/`"commit"` pair per bumped dependency and one
+  `sha256` line per record, which are shapes `approve_bot_runs.py` already accepts.
+
+tap's own deployment profiles (`boot/*.boot.json` at tap's root) are not in-package records and
+carry no digest, and tap has its own renovate config, so none of this applies to tap.
 
 ## Adding a repository
 

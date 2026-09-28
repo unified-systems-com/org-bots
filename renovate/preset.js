@@ -68,6 +68,20 @@ module.exports = {
       prPriority: 5,
     },
     {
+      // An in-package boot record (tap_plugin/<slug>/boot/<name>.boot.json) is guarded by a
+      // sha256 in its package's tap-plugin.toml ([[boot.records]]), and the plugin's checks
+      // fail when the two disagree. So after bumping a record, rewrite that digest with tap's
+      // own derivation (tap.boot_records, vendored at a pinned commit in renovate/boot-records/)
+      // and commit the toml with the record. The command is allowed, exactly, by
+      // `allowedCommands` in renovate/global.js; any other command is refused there.
+      matchManagers: ["custom.regex"],
+      matchFileNames: ["tap_plugin/*/boot/*.boot.json"],
+      postUpgradeTasks: {
+        commands: ["python3 -I /github-action/boot-records/refresh.py"],
+        fileFilters: ["tap_plugin/*/tap-plugin.toml"],
+      },
+    },
+    {
       // Reusable-workflow pins into tap and unified-ai-review belong to the custom manager
       // below. The built-in github-actions manager also extracts them: it skips a bare or
       // dated-comment pin (unversioned-reference) but tracks a `@<sha> # main` pin through
@@ -111,8 +125,14 @@ module.exports = {
   // --check` fails and the boot raises a moved-tag Flaw. Lookup returns the PEELED commit
   // of an annotated tag (verified on Renovate 44.103.1 in the tap#635 spike).
   //
-  // Matches only entries that carry a `commit`. Plugin and product boot records today pin
-  // `url` + `rev` alone, so this manager finds nothing in them.
+  // Matches only entries that carry a `commit`. Since 2026-09-27 every fleet repository's
+  // in-package CI record (tap_plugin/<slug>/boot/ci.boot.json) pins `commit`, as do some
+  // entries of the product records; entries that pin `url` + `rev` alone are not matched.
+  // Every such record's digest is refreshed by the postUpgradeTasks rule above.
+  //
+  // No autoReplaceStringTemplate: Renovate then edits the matched text in place, replacing
+  // the old `rev` value and the old commit, so the record keeps its own indentation and line
+  // breaks. (The digest is over canonicalized JSON, so layout would not move it anyway.)
   customManagers: [
     {
       customType: "regex",
@@ -120,8 +140,6 @@ module.exports = {
       matchStrings: [
         "\"url\": \"https://github\\.com/(?<packageName>[^\"]+)\",\\s*\"rev\": \"(?<currentValue>[^\"]+)\",\\s*\"commit\": \"(?<currentDigest>[0-9a-f]{40})\"",
       ],
-      autoReplaceStringTemplate:
-        "\"url\": \"https://github.com/{{{packageName}}}\",\n          \"rev\": \"{{{newValue}}}\",\n          \"commit\": \"{{{newDigest}}}\"",
       datasourceTemplate: "github-tags",
       versioningTemplate: "semver",
     },
