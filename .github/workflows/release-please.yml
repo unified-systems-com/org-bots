@@ -245,16 +245,29 @@ jobs:
               echo "::error::the boot-record digest refresh failed for ${repo}"
               failed+=("$repo"); continue
             fi
-            if [[ -z "$(git -C "${work}/${name}" status --porcelain)" ]]; then
+            if ! changed=$(git -C "${work}/${name}" status --porcelain --untracked-files=all); then
+              echo "::endgroup::"
+              echo "::error::could not read the refresh's changes for ${repo}"
+              failed+=("$repo"); continue
+            fi
+            if [[ -z "$changed" ]]; then
               echo "boot-record digests already current"
               echo "::endgroup::"
               continue
             fi
+            # Only the digest files may be committed: a modified `tap_plugin/<slug>/tap-plugin.toml`,
+            # as Renovate's fileFilters allows. Anything else the refresh touched stops the push.
+            if grep -vqE '^ M tap_plugin/[A-Za-z0-9_]+/tap-plugin\.toml$' <<< "$changed"; then
+              echo "::endgroup::"
+              echo "::error::the digest refresh for ${repo} changed files other than tap-plugin.toml; nothing pushed"
+              failed+=("$repo"); continue
+            fi
             # The bot's own identity, as Renovate commits (renovate/global.js). No
             # Signed-off-by: a bot does not certify the DCO; the human who merges does.
-            if ! { git -C "${work}/${name}" -c user.name="$BOT" \
+            if ! { git -C "${work}/${name}" add -- 'tap_plugin/*/tap-plugin.toml' \
+                   && git -C "${work}/${name}" -c user.name="$BOT" \
                      -c user.email="${BOT_ID}+${BOT}@users.noreply.github.com" \
-                     commit --quiet --all -m "chore: refresh boot-record digests for the release" \
+                     commit --quiet -m "chore: refresh boot-record digests for the release" \
                    && git -C "${work}/${name}" -c credential.helper= -c "credential.helper=${askpass_helper}" \
                      push --quiet origin "HEAD:refs/heads/${branch}"; }; then
               echo "::endgroup::"
