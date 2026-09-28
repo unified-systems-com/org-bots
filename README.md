@@ -20,7 +20,7 @@ on `pull_request`, so a fork's PR can trigger only GitHub's read-only CodeQL sca
 
 | Path | What it is |
 | --- | --- |
-| `.github/workflows/renovate.yml` | Renovate in fork mode. Pilot: manual dispatch only, one repository per run (`only`, default `tap-plugin-github-core`); the daily schedule returns when the pilot ends |
+| `.github/workflows/renovate.yml` | Renovate in fork mode. Pilot: manual dispatch only, one repository per run (`only`), or `fleet` (the default: every discovered repository, not tap) or `all`; the daily schedule returns when the pilot ends |
 | `renovate/global.js` | Renovate's global config: tap (named) plus the discovered repositories, the bot identity (from environment variables), PR limits, fork mode, no onboarding, no dashboard |
 | `renovate/preset.js` | The shared repository config every discovered repository gets, including tap's boot-record pin manager |
 | `renovate/boot-records/` | The digest refresh Renovate runs after bumping an in-package boot record: `refresh.py`, tap's `tap.boot_records` vendored at a pinned commit (`tap/`, `tap-vendor.json`), `vendor.py` to check or move the pin, and its offline tests |
@@ -154,13 +154,13 @@ credential. The org `tag-protection` ruleset prevents a tag's deletion or update
 2. Dry run, and read what it would tag:
 
    ```sh
-   scripts/cut-release.sh tap-plugin-github-core
+   scripts/cut-release.sh github-core-tap
    ```
 
 3. Cut it:
 
    ```sh
-   scripts/cut-release.sh tap-plugin-github-core --yes
+   scripts/cut-release.sh github-core-tap --yes
    ```
 
    It labels the merged release PR if needed, dry-runs again and refuses unless the tag matches
@@ -313,15 +313,15 @@ repository changes. Removing the topic, or archiving the repository, takes it ou
   a named entry wins over discovery. (No discovered repository has its own config today.)
 - **release-please:** a discovered repository without `release-please-config.json` and
   `.release-please-manifest.json` at its root is skipped with a notice; add them, the way
-  tap-plugin-github-core has them, plus the self-entry `extra-files` entry in "Release PRs"
+  github-core-tap has them, plus the self-entry `extra-files` entry in "Release PRs"
   above when the plugin has a CI record, and the next run picks it up. A repository that still runs its
   own `release-please.yml` is skipped with a warning until that workflow is retired.
 
 ## Running a job by hand
 
 ```sh
-gh workflow run renovate.yml -R unified-systems-com/org-bots            # pilot: github-core only; add -f logLevel=debug to troubleshoot
-gh workflow run renovate.yml -R unified-systems-com/org-bots -f only=tap-plugin-gryphon-playground   # another single fleet repo (must be discovered, or tap)
+gh workflow run renovate.yml -R unified-systems-com/org-bots            # the default, fleet: every discovered repo, not tap; add -f logLevel=debug to troubleshoot
+gh workflow run renovate.yml -R unified-systems-com/org-bots -f only=gryphon-playground-tap   # another single fleet repo (must be discovered, or tap)
 gh workflow run renovate.yml -R unified-systems-com/org-bots -f only=all  # tap and every discovered repository (an empty value falls back to the default)
 gh workflow run release-please.yml -R unified-systems-com/org-bots
 gh run list -R unified-systems-com/org-bots --limit 5
