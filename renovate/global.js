@@ -99,11 +99,19 @@ const ALL = [
 // repository: discovery, and autodiscover off, are what decide which repositories get PRs.
 // A name that is not in the list is an error, never a way to reach a repository discovery
 // did not find (owner unified-systems-com AND the `tap-plugin` topic).
-// "all" (or nothing) means every listed repository. A workflow_dispatch string input that
-// is left empty is replaced by its default, so an empty value cannot be used to ask for "all".
+// "all" (or nothing) means every listed repository. "fleet" means every discovered
+// repository but not tap: tap still runs its own Renovate (App mode, .github/workflows/
+// renovate.yml in tap) until that is retired, and two Renovates on one repository open
+// duplicate PRs. A workflow_dispatch string input that is left empty is replaced by its
+// default, so an empty value cannot be used to ask for "all".
 const RAW = (process.env.ORG_BOTS_ONLY || "").trim();
-const ONLY = RAW === "all" ? "" : RAW;
-const repositories = ONLY ? ALL.filter((r) => r.repository === `${ORG}/${ONLY}`) : ALL;
+const ONLY = RAW === "all" || RAW === "fleet" ? "" : RAW;
+const repositories =
+  RAW === "fleet"
+    ? ALL.filter((r) => r.repository !== `${ORG}/tap`)
+    : ONLY
+      ? ALL.filter((r) => r.repository === `${ORG}/${ONLY}`)
+      : ALL;
 if (ONLY && repositories.length !== 1) {
   throw new Error(`ORG_BOTS_ONLY=${ONLY} is not tap or a discovered repository`);
 }

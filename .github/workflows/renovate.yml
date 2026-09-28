@@ -31,9 +31,9 @@ on:
   workflow_dispatch:
     inputs:
       only:
-        description: "Run on this ONE repository (name, no owner): tap or a discovered one. \"all\" for tap and every discovered repository."
+        description: "Run on this ONE repository (name, no owner): tap or a discovered one. \"fleet\" for every discovered repository (not tap); \"all\" for those plus tap."
         required: false
-        default: "tap-plugin-github-core"
+        default: "fleet"
         type: string
       logLevel:
         description: "Renovate log level (debug for troubleshooting)"
