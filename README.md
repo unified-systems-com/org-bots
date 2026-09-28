@@ -283,6 +283,22 @@ in its checkout of the repository, and commits the rewritten `tap-plugin.toml` w
 - **The PR this produces** changes a `"rev"`/`"commit"` pair per bumped dependency and one
   `sha256` line per record, which are shapes `approve_bot_runs.py` already accepts.
 
+**Release PRs.** A plugin's CI record names the plugin itself (the "self entry") at its latest
+release tag, and release-please moves that `rev` to the new tag through an `extra-files` entry in
+the repository's `release-please-config.json`:
+
+```json
+{"type": "json", "path": "tap_plugin/<slug>/boot/ci.boot.json",
+ "jsonpath": "$.install.plugins[?(@.slug=='<slug>')].source.rev"}
+```
+
+release-please keeps the tag's `v` (`"v0.2.1"` becomes `"v0.2.2"`, one line). The self entry carries
+no `commit`: a record cannot name its own release commit (tap#865; tap#869 is the follow-up that
+binds it at boot). The move changes the record's digest, so after `release-pr` the release-please
+job clones the release branch from the bot's fork, runs the same `refresh.py` on it, and pushes one
+more commit, as the bot and without `Signed-off-by`, when a digest changed. release-please rewrites
+the branch only when the release notes change, and the job refreshes it again straight after.
+
 tap's own deployment profiles (`boot/*.boot.json` at tap's root) are not in-package records and
 carry no digest, and tap has its own renovate config, so none of this applies to tap.
 
@@ -297,7 +313,8 @@ repository changes. Removing the topic, or archiving the repository, takes it ou
   a named entry wins over discovery. (No discovered repository has its own config today.)
 - **release-please:** a discovered repository without `release-please-config.json` and
   `.release-please-manifest.json` at its root is skipped with a notice; add them, the way
-  tap-plugin-github-core has them, and the next run picks it up. A repository that still runs its
+  tap-plugin-github-core has them, plus the self-entry `extra-files` entry in "Release PRs"
+  above when the plugin has a CI record, and the next run picks it up. A repository that still runs its
   own `release-please.yml` is skipped with a warning until that workflow is retired.
 
 ## Running a job by hand
