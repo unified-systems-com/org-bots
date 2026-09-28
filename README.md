@@ -9,9 +9,12 @@ since fork mode it holds **no credential that can write to an org repository**:
 | release-please, stage 1 | the fork bot | `.github/workflows/release-please.yml` | Opens and refreshes each repository's release PR from the bot's fork |
 | release-please, stage 2 | the maintainer, with their own `gh` login | `scripts/cut-release.sh` | Tags the merged release PR and publishes the GitHub Release |
 
-The repository is **private**. This is a deliberate exception to the org's public-by-default rule.
-Nothing here is secret, but a private repository has a smaller audience that can open PRs,
-comment, or run workflows against it.
+The repository is **public** (since 2026-09-28). Nothing here is secret, and the controls are
+designed to hold with the design known, not to depend on it being hidden. Merges to `main` need
+one approving review from a code owner other than the author, including of the latest push (the
+org ruleset `org-bots-two-person`, no bypass), and every run of the `bots` environment, which
+holds the bot's token, needs criticalsec's approval with admin bypass off. No workflow here runs
+on `pull_request`, so a fork's PR can trigger only GitHub's read-only CodeQL scan.
 
 ## What is in it
 
@@ -101,7 +104,7 @@ There is none here any more.
 | --- | --- | --- |
 | `FORK_BOT_TOKEN` | the `bots` environment of this repository | the fork bot's own forks only. On org repositories it can do what any GitHub user can: fork, and open PRs and issues |
 | The maintainer's `gh` login | the maintainer's machine | whatever the maintainer can; used by `cut-release.sh` to label, tag and publish |
-| `TAP_RENOVATE_PRIVATE_KEY`, `TAP_RELEASE_PLEASE_PRIVATE_KEY` | the `bots` environment, **no longer read by any workflow here** | every org repository the two Apps are installed on. See "Retiring the App keys" |
+| `TAP_RENOVATE_PRIVATE_KEY`, `TAP_RELEASE_PLEASE_PRIVATE_KEY` | **deleted from the `bots` environment on 2026-09-28**; the Apps and tap's own copies remain until tap migrates | every org repository the two Apps are installed on. See "Retiring the App keys" |
 
 **Where the bot token is.** `FORK_BOT_TOKEN` is a secret of the `bots` **environment**, never a
 repository-level secret. The environment's deployment branch policy allows `main` only, so the
@@ -322,7 +325,7 @@ Once a fork-mode Renovate run and a fork-mode release PR have each landed and be
 - `TAP_RENOVATE_PRIVATE_KEY`
 - `TAP_RELEASE_PLEASE_PRIVATE_KEY`
 
-They are not deleted by this change. The Apps themselves stay while tap's own `renovate.yml` and
+Both were deleted on 2026-09-28. The Apps themselves stay while tap's own `renovate.yml` and
 `release-please.yml` use them (tap's repository secrets `RENOVATE_APP_ID`,
 `RENOVATE_APP_PRIVATE_KEY`, `TAP_RELEASE_PLEASE_APP_PRIVATE_KEY` and variable
 `TAP_RELEASE_PLEASE_APP_ID`). A key that is only deleted here can still mint tokens wherever it is
@@ -377,8 +380,8 @@ branch with the App token. In fork mode the branch is in the bot's fork. The opt
 
 1. **Renovate:** delete tap's `.github/workflows/renovate.yml`; drop the `prConcurrentLimit`
    override for tap in `renovate/global.js` if the fleet limits suit it. tap keeps its own
-   `renovate.json5`: a `local>unified-systems-com/org-bots` preset would not resolve, because the
-   bot cannot read this private repository.
+   `renovate.json5`: a `local>unified-systems-com/org-bots` preset is not used: the global
+   config loads its preset from disk, which needs no platform read.
 2. **release-please:** add the uv.lock extra-file (option 1 above) and delete tap's
    `.github/workflows/release-please.yml`, including its `lock-refresh` job.
 3. **The PR-check decision above.**
