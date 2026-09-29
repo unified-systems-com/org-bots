@@ -86,6 +86,11 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Start at a random moment (the ramp)
+        # A scheduled run fires at the same minute every time; a random 0-10 minute start
+        # keeps the bot's activity from landing on a fixed rhythm.
+        run: sleep $(( RANDOM % 601 ))
+
       - name: Choose the fleet slice (the ramp)
         id: batch
         env:

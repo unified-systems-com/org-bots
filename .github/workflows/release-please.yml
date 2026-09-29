@@ -97,12 +97,14 @@ jobs:
           # (the "own lane" check below). Moving tap here also needs its uv.lock refresh
           # solved and its PR-check policy decided: README, "tap".
           FLEET_JSON: ${{ needs.discover.outputs.fleet }}
-          # The ramp: at most MAX_NEW_PRS new release PRs per run, and a pause after each.
+          # The ramp: at most MAX_NEW_PRS new release PRs per run, and a RANDOM pause of
+          # PAUSE_MIN..PAUSE_MAX seconds after each, so no two runs have the same rhythm.
           # The first fleet run opened 22 at once and GitHub flagged the bot account
           # (2026-09-28). Refreshing an existing release PR is not capped; repositories past
           # the cap are deferred to the next run with a notice, not failed.
           MAX_NEW_PRS: "3"
-          PAUSE_SECONDS: "180"
+          PAUSE_MIN: "120"
+          PAUSE_MAX: "300"
         run: |
           set -euo pipefail
           if [[ ! "$BOT" =~ ^[A-Za-z0-9][A-Za-z0-9-]{0,38}$ ]]; then
@@ -253,7 +255,7 @@ jobs:
               # below, so count it and pause now: every later exit from this iteration is
               # then already paced.
               new_prs=$((new_prs + 1))
-              sleep "$PAUSE_SECONDS"
+              sleep $(( PAUSE_MIN + RANDOM % (PAUSE_MAX - PAUSE_MIN + 1) ))
             fi
             if [[ ! "$branch" =~ ^release-please--[A-Za-z0-9._/-]+$ || "$branch" == *..* ]]; then
               echo "::endgroup::"

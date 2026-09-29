@@ -328,9 +328,18 @@ created went invisible to everyone else. So both jobs pace themselves:
   `(run number mod 8)+1` of 8, about three repositories). Eight consecutive runs cover the fleet
   once, on any schedule.
   `batch=all` removes the slicing; don't, on a young account.
-- **release-please** opens at most `MAX_NEW_PRS` (3) new release PRs per run, sleeping
-  `PAUSE_SECONDS` (180) after each. Repositories past the cap are deferred to the next run with a
+- **release-please** opens at most `MAX_NEW_PRS` (3) new release PRs per run, sleeping a random
+  `PAUSE_MIN`..`PAUSE_MAX` (120-300) seconds after each. Repositories past the cap are deferred to the next run with a
   notice. Refreshing an existing release PR is not capped.
+
+- **Renovate** also starts each run after a random 0-10 minute delay, so scheduled runs never
+  land on a fixed rhythm.
+
+**The same rule applies to people.** Any fleet-wide change made by hand, from any account
+(notgeorge included), goes one repository at a time with random gaps: open PRs 3-7 minutes
+apart, merge them 1-3 minutes apart, pilot on one repository and stop the batch if it is not
+green, and stop the batch on any failure to open a PR. The first hand-run fleet pin bump
+(2026-09-28, 24 repositories) was done exactly this way and drew no attention.
 
 After any bot run, check that one of its PRs resolves for someone other than the bot. A green
 run means only that the API calls succeeded.
