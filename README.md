@@ -190,7 +190,10 @@ any fleet repository while the fork bot is unavailable. Dry run by default.
   amended with `git commit -s` and a `No-issue:` trailer and force-pushed with a lease: your
   tooling applying your trailer at your command. The certification is still your review and
   merge.
-- **Pacing:** one repository per run, random gaps between pushes; see "The ramp".
+- **Pacing, enforced by the script:** one repository per run; a `--yes` run refuses to start
+  within 30 minutes of the previous one on the same machine (so a loop over the fleet cannot
+  burst), starts after a random 0-3 minute delay, and waits a random 20-60 s between sign-off
+  pushes. See "The ramp".
 
 ## Approving the bot's runs
 

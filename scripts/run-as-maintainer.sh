@@ -25,8 +25,15 @@
 #             trailer at your command (CONTRIBUTING "Sign-Off"); the certification is still
 #             your review and merge of the PR.
 #
-# Pacing (tap spec req-cicd-fleet-bot-paced): one repository per invocation, and a random
-# 20-60 s gap between sign-off pushes. Never loop this over the fleet in a tight loop.
+# Pacing (tap spec req-cicd-fleet-bot-paced), enforced here, not left to the caller:
+#   - one repository per invocation;
+#   - a --yes run refuses to start within COOLDOWN_MIN (30) minutes of the last --yes run on this
+#     machine (stamp: ~/.cache/org-bots/run-as-maintainer.last), so looping it over the fleet
+#     cannot become a burst; --dry-run is exempt, it writes nothing;
+#   - a --yes run starts after a random 0-3 minute delay;
+#   - a random 20-60 s gap between sign-off pushes.
+# Inside one run, Renovate itself stays under tap's config limits (config:recommended: about two
+# new PRs an hour).
 #
 # The tools run in disposable containers pinned by digest (the same images CI uses). Your token
 # reaches them only as an environment variable; output is checked for it before printing.
@@ -58,6 +65,23 @@ gh repo view "$REPO" --json name >/dev/null
 
 ME_NAME="$(git config user.name || true)"; ME_EMAIL="$(git config user.email || true)"
 [[ -n "$ME_NAME" && -n "$ME_EMAIL" ]] || { echo "set git config user.name and user.email" >&2; exit 1; }
+if [[ "$mode" == "yes" ]]; then
+  COOLDOWN_MIN=30
+  stamp="${ORG_BOTS_STATE_DIR:-${HOME}/.cache/org-bots}/run-as-maintainer.last"
+  mkdir -p "$(dirname "$stamp")"
+  if [[ -f "$stamp" ]]; then
+    last="$(cat "$stamp")"; now="$(date +%s)"
+    if [[ "$last" =~ ^[0-9]+$ ]] && (( now - last < COOLDOWN_MIN * 60 )); then
+      echo "the last --yes run was $(( (now - last) / 60 )) min ago; wait until ${COOLDOWN_MIN} min have passed (req-cicd-fleet-bot-paced)" >&2
+      exit 3
+    fi
+  fi
+  date +%s > "$stamp"
+  delay=$(( RANDOM % 181 ))
+  echo "starting in ${delay}s (random start, req-cicd-fleet-bot-paced)"
+  sleep "$delay"
+fi
+
 TOKEN="$(gh auth token)"
 [[ -n "$TOKEN" ]] || { echo "gh auth token returned nothing: run gh auth login" >&2; exit 1; }
 
