@@ -72,7 +72,7 @@ jobs:
     name: release-please (discovered repositories)
     needs: discover
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 30
     environment: bots
     permissions:
       contents: read   # check out this repository (the pinned CLI)
@@ -97,6 +97,14 @@ jobs:
           # (the "own lane" check below). Moving tap here also needs its uv.lock refresh
           # solved and its PR-check policy decided: README, "tap".
           FLEET_JSON: ${{ needs.discover.outputs.fleet }}
+          # The ramp: at most MAX_NEW_PRS new release PRs per run, and a RANDOM pause of
+          # PAUSE_MIN..PAUSE_MAX seconds after each, so no two runs have the same rhythm.
+          # The first fleet run opened 22 at once and GitHub flagged the bot account
+          # (2026-09-28). Refreshing an existing release PR is not capped; repositories past
+          # the cap are deferred to the next run with a notice, not failed.
+          MAX_NEW_PRS: "3"
+          PAUSE_MIN: "120"
+          PAUSE_MAX: "300"
         run: |
           set -euo pipefail
           if [[ ! "$BOT" =~ ^[A-Za-z0-9][A-Za-z0-9-]{0,38}$ ]]; then
@@ -113,6 +121,7 @@ jobs:
           # shellcheck disable=SC2016  # expanded by the helper's shell when git runs it, not here
           askpass_helper='!f() { echo username=x-access-token; echo "password=${RP_TOKEN}"; }; f'
           failed=()
+          new_prs=0
           mapfile -t repos < <(jq -r '(.fleet + .core)[]' <<< "$FLEET_JSON")
           if (( ${#repos[@]} == 0 )); then
             echo "::error::discovery produced no repositories"
@@ -196,6 +205,20 @@ jobs:
               failed+=("$repo"); continue
             fi
 
+            if ! had_pr=$(gh pr list -R "$repo" --state open --limit 100 \
+                            --json headRefName,headRepositoryOwner \
+                            --jq "[.[] | select(.headRepositoryOwner.login == \"${BOT}\")
+                                       | select(.headRefName | startswith(\"release-please--\"))] | length"); then
+              echo "::endgroup::"
+              echo "::error::could not list ${repo}'s open pull requests"
+              failed+=("$repo"); continue
+            fi
+            if [[ "$had_pr" == "0" ]] && (( new_prs >= MAX_NEW_PRS )); then
+              echo "::endgroup::"
+              echo "::notice::${repo}: deferred to the next run (this run already opened ${new_prs} new release PRs)"
+              continue
+            fi
+
             if ! npx --no-install release-please release-pr \
                  --token="$RP_TOKEN" --repo-url="$repo" \
                  --config-file=release-please-config.json \
@@ -226,6 +249,13 @@ jobs:
             if [[ -z "$branch" ]]; then
               echo "::endgroup::"
               continue   # no release pending
+            fi
+            if [[ "$had_pr" == "0" ]]; then
+              # A new release PR exists from here on, whatever happens to its digest refresh
+              # below, so count it and pause now: every later exit from this iteration is
+              # then already paced.
+              new_prs=$((new_prs + 1))
+              sleep $(( PAUSE_MIN + RANDOM % (PAUSE_MAX - PAUSE_MIN + 1) ))
             fi
             if [[ ! "$branch" =~ ^release-please--[A-Za-z0-9._/-]+$ || "$branch" == *..* ]]; then
               echo "::endgroup::"
