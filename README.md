@@ -174,6 +174,24 @@ The CLI runs in a disposable `node:22-slim` container (pinned by digest) from th
 lockfile. Your token reaches the container only as an environment variable. The script never
 writes it to disk and never prints it.
 
+## Running a bot by hand
+
+`scripts/run-as-maintainer.sh <repo> renovate|release [--yes]` runs the same pinned Renovate or
+release-please (stage 1) against ONE repository with your own `gh` login, from your machine. It
+is how tap is served since its App lanes were retired (George, 2026-09-29), and the stopgap for
+any fleet repository while the fork bot is unavailable. Dry run by default.
+
+- **renovate** needs the repository's own Renovate config (tap has `renovate.json5`), runs
+  without fork mode, and commits as you with the subject suffixed `[via maintainer-run]`.
+- **release** opens or refreshes the release PR (`release-please release-pr`, not `--fork`),
+  labelled; cut the release afterwards with `scripts/cut-release.sh`, as always.
+- **Sign-off:** the tools' commits carry no `Signed-off-by`, and tap's DCO check wants one on
+  every commit. With `--yes`, each branch the tool wrote whose one commit is yours and unsigned is
+  amended with `git commit -s` and a `No-issue:` trailer and force-pushed with a lease: your
+  tooling applying your trailer at your command. The certification is still your review and
+  merge.
+- **Pacing:** one repository per run, random gaps between pushes; see "The ramp".
+
 ## Approving the bot's runs
 
 ```sh
