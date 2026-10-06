@@ -89,6 +89,8 @@ scrub() { if [[ "$1" == *"$TOKEN"* ]]; then echo "(output withheld: it contained
 
 run_renovate() {
   local dry=() out
+  # ${dry[@]+"${dry[@]}"}, not "${dry[@]}": macOS ships bash 3.2, which under set -u treats an
+  # empty array as unbound, and --yes leaves dry empty.
   [[ "$mode" == "dry-run" ]] && dry=(-e RENOVATE_DRY_RUN=full)
   out="$(RENOVATE_TOKEN="$TOKEN" docker run --rm \
       -e RENOVATE_TOKEN \
@@ -99,12 +101,14 @@ run_renovate() {
       -e RENOVATE_GIT_AUTHOR="${ME_NAME} <${ME_EMAIL}>" \
       -e RENOVATE_COMMIT_MESSAGE_SUFFIX="$SUFFIX" \
       -e LOG_LEVEL=info \
-      "${dry[@]}" "$RENOVATE_IMAGE" 2>&1)" || { scrub "$out"; return 1; }
+      ${dry[@]+"${dry[@]}"} "$RENOVATE_IMAGE" 2>&1)" || { scrub "$out"; return 1; }
   scrub "$out"
 }
 
 run_release() {
   local pin_dir out dry=()
+  # ${dry[@]+"${dry[@]}"}, not "${dry[@]}": macOS ships bash 3.2, which under set -u treats an
+  # empty array as unbound, and --yes leaves dry empty.
   pin_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/../release-please" && pwd)"
   [[ "$mode" == "dry-run" ]] && dry=(--dry-run)
   out="$(RP_TOKEN="$TOKEN" REPO="$REPO" docker run --rm -e RP_TOKEN -e REPO -v "${pin_dir}:/pin:ro" "$NODE_IMAGE" sh -c '
@@ -116,7 +120,7 @@ run_release() {
         --token="$RP_TOKEN" --repo-url="$REPO" \
         --config-file=release-please-config.json \
         --manifest-file=.release-please-manifest.json "$@"
-    ' sh "${dry[@]}" 2>&1)" || { scrub "$out"; return 1; }
+    ' sh ${dry[@]+"${dry[@]}"} 2>&1)" || { scrub "$out"; return 1; }
   scrub "$out"
 }
 
