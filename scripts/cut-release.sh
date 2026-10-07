@@ -18,8 +18,8 @@
 #      .release-please-manifest.json on its default branch.
 #   3. Run `release-please github-release`: tag the merge commit, publish the Release,
 #      comment on the PR, and relabel it `autorelease: tagged`.
-#   4. Confirm the tag exists, and list the target's release-sbom runs, which the tag push
-#      starts.
+#   4. Confirm the tag exists, and list the workflow runs the tag push started, whatever the
+#      target repository calls its release workflow.
 #
 # The CLI runs in a disposable container (--rm) from the same lockfile CI uses
 # (release-please/package-lock.json, mounted read-only), so its whole dependency closure is
@@ -131,13 +131,20 @@ fi
 plan="$(rp --dry-run)"
 printf '%s\n' "$plan"
 tags=()
+# The plan indents each field; the leading spaces are part of the line, not the tag name.
 while IFS= read -r t; do [[ -n "$t" ]] && tags+=("$t"); done \
-  < <(grep -oE "^  tag: '[^']+'" <<< "$plan" | sed -E "s/tag: '(.*)'/\1/")
+  < <(grep -oE "^  tag: '[^']+'" <<< "$plan" | sed -E "s/^ *tag: '(.*)'$/\1/")
 prs="$(grep -oE "^  pullNumber: [0-9]+" <<< "$plan" | awk '{print $2}' | sort -u)"
 if (( ${#tags[@]} == 0 )); then
   echo "nothing to release."
   exit 0
 fi
+for t in "${tags[@]}"; do
+  if [[ ! "$t" =~ ^[A-Za-z0-9._/-]+$ ]]; then
+    echo "refusing: the plan names a tag that is not a plain tag name: ${t}" >&2
+    exit 1
+  fi
+done
 if [[ -n "$expected" && ! " ${tags[*]} " == *" ${expected} "* ]]; then
   echo "refusing: would tag ${tags[*]}, but the manifest says ${expected}" >&2
   exit 1
@@ -159,6 +166,17 @@ for n in $prs; do
   [[ "$labels" == *"$TAGGED"* ]] || { echo "#${n} was not relabelled '${TAGGED}'" >&2; ok=0; }
 done
 gh release list -R "$REPO" --limit 3
-echo "release-sbom runs (the tag push starts one; it can take a minute to appear):"
-gh run list -R "$REPO" --workflow release-sbom.yml --limit 3 || true
+# The runs the tag push started: every run on the tagged commit whose ref is the tag. A plugin's
+# is release-sbom.yml, tap's is publish-release-tags.yml; no workflow name is assumed.
+echo "runs the tag push started (they can take a minute to appear):"
+for t in "${tags[@]}"; do
+  sha="$(gh api "repos/${REPO}/commits/${t}" --jq .sha 2>/dev/null || true)"
+  if [[ -z "$sha" ]]; then
+    echo "  ${t}: could not resolve the tagged commit" >&2
+    continue
+  fi
+  gh api "repos/${REPO}/actions/runs?head_sha=${sha}&per_page=50" \
+    --jq ".workflow_runs[] | select(.head_branch == \"${t}\") | \"  ${t}: \(.name) \(.status) \(.conclusion // \"\") \(.html_url)\"" \
+    || true
+done
 (( ok )) || exit 1
