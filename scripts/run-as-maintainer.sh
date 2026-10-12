@@ -88,19 +88,40 @@ TOKEN="$(gh auth token)"
 scrub() { if [[ "$1" == *"$TOKEN"* ]]; then echo "(output withheld: it contained the token)" >&2; else printf '%s\n' "$1"; fi; }
 
 run_renovate() {
-  local dry=() out
+  local dry=() preset_mount=() preset_dir out
   # ${dry[@]+"${dry[@]}"}, not "${dry[@]}": macOS ships bash 3.2, which under set -u treats an
   # empty array as unbound, and --yes leaves dry empty.
   [[ "$mode" == "dry-run" ]] && dry=(-e RENOVATE_DRY_RUN=full)
+  # renovate/global.js's own fleet-mode run already solves "a repository with no config of
+  # its own": it spreads renovate/preset.js into every repository's config and sets
+  # requireConfig=optional, globally. This path never wired that in -- it hard-coded
+  # `required` with nothing mounted, so the one real gap was a missing mount here, not a
+  # missing renovate.json5 in every plugin (unified-systems-com/tap#999 corrected that
+  # premise; unified-systems-com/org-bots#22 is this fix).
+  #
+  # tap is excluded, exactly as global.js excludes it from the spread: it carries its own
+  # renovate.json5, read directly from the repository by Renovate's own platform client --
+  # mounting preset.js on top would register its boot-record custom manager twice.
+  #
+  # Known gap, accepted rather than chased: preset.js's postUpgradeTasks command
+  # (python3 -I /github-action/boot-records/refresh.py) is mounted by the fleet Action, not
+  # here. A manual run that bumps a boot-record pin will not get that digest refresh; the
+  # PR's own `tap.git_pin --check` conformance gate catches the mismatch on push, so this
+  # fails loud rather than silent -- narrower than fleet mode, not unsafe.
+  if [[ "$REPO" != "${ORG}/tap" ]]; then
+    preset_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/../renovate" && pwd)"
+    preset_mount=(-v "${preset_dir}/preset.js:/renovate-preset.js:ro" -e RENOVATE_CONFIG_FILE=/renovate-preset.js)
+  fi
   out="$(RENOVATE_TOKEN="$TOKEN" docker run --rm \
       -e RENOVATE_TOKEN \
       -e RENOVATE_PLATFORM=github \
       -e RENOVATE_REPOSITORIES="$REPO" \
       -e RENOVATE_ONBOARDING=false \
-      -e RENOVATE_REQUIRE_CONFIG=required \
+      -e RENOVATE_REQUIRE_CONFIG=optional \
       -e RENOVATE_GIT_AUTHOR="${ME_NAME} <${ME_EMAIL}>" \
       -e RENOVATE_COMMIT_MESSAGE_SUFFIX="$SUFFIX" \
       -e LOG_LEVEL=info \
+      ${preset_mount[@]+"${preset_mount[@]}"} \
       ${dry[@]+"${dry[@]}"} "$RENOVATE_IMAGE" 2>&1)" || { scrub "$out"; return 1; }
   scrub "$out"
 }
