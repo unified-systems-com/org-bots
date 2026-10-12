@@ -107,9 +107,9 @@ run_renovate() {
   # manager twice. `requireConfig` stays `required` for tap specifically (and for whatever
   # other repository name this script is handed) -- optional only where the mount actually
   # supplies a config, so a renamed or missing tap renovate.json5 still refuses loudly
-  # instead of silently falling back to Renovate's built-in defaults (caught in review:
-  # flipping this unconditionally would have been a real, if narrow, fail-open regression
-  # for every repo besides the fleet ones this fix targets).
+  # instead of silently falling back to Renovate's built-in defaults -- flipping this
+  # unconditionally would be a real, if narrow, fail-open regression for every repo besides
+  # the fleet ones this fix targets.
   #
   # Known gap, accepted rather than chased: preset.js's postUpgradeTasks command
   # (python3 -I /github-action/boot-records/refresh.py) is mounted by the fleet Action, not
@@ -126,12 +126,12 @@ run_renovate() {
   # which has no case-conversion parameter expansion.
   if [[ "$(printf '%s' "$REPO" | tr '[:upper:]' '[:lower:]')" != "${ORG}/tap" ]]; then
     # set -e already aborts if the `cd` below fails (a script copied without its sibling
-    # renovate/ directory); this check exists for the narrower case both AI-review seats on
-    # org-bots#24 named: `docker run -v <missing-file>:<dest>:ro` does not fail the way a
-    # missing `cd` target does — Docker creates an empty directory at the mount point
-    # instead of erroring, which would hand Renovate an unreadable "config file" rather than
-    # refuse. Fail loudly here instead of finding that out from Renovate's own error, or
-    # worse, from `optional` silently falling back to its built-in defaults.
+    # renovate/ directory); this check exists for the narrower case: `docker run -v
+    # <missing-file>:<dest>:ro` does not fail the way a missing `cd` target does -- Docker
+    # creates an empty directory at the mount point instead of erroring, which would hand
+    # Renovate an unreadable "config file" rather than refuse. Fail loudly here instead of
+    # finding that out from Renovate's own error, or worse, from `optional` silently
+    # falling back to its built-in defaults.
     preset_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/../renovate" && pwd)"
     [[ -f "${preset_dir}/preset.js" ]] || {
       echo "expected ${preset_dir}/preset.js to exist; refusing to flip RENOVATE_REQUIRE_CONFIG" \
