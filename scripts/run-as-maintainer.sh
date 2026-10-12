@@ -117,8 +117,27 @@ run_renovate() {
   # PR's own `tap.git_pin --check` conformance gate catches the mismatch on push, so this
   # fails loud rather than silent -- narrower than fleet mode, not unsafe.
   require_config=required
-  if [[ "$REPO" != "${ORG}/tap" ]]; then
+  # Case-insensitive: GitHub resolves a repository name case-insensitively (the earlier
+  # `gh repo view "$REPO"` check would succeed for "unified-systems-com/Tap" just as it does
+  # for "unified-systems-com/tap"), but this comparison was a plain string match -- an
+  # operator typo in case would have sent tap down the fleet-preset path, mounting
+  # preset.js on top of its own renovate.json5 (the double-registration this exclusion
+  # exists to prevent). `tr`, not `${VAR,,}`: the header above targets macOS's bash 3.2,
+  # which has no case-conversion parameter expansion.
+  if [[ "$(printf '%s' "$REPO" | tr '[:upper:]' '[:lower:]')" != "${ORG}/tap" ]]; then
+    # set -e already aborts if the `cd` below fails (a script copied without its sibling
+    # renovate/ directory); this check exists for the narrower case both AI-review seats on
+    # org-bots#24 named: `docker run -v <missing-file>:<dest>:ro` does not fail the way a
+    # missing `cd` target does — Docker creates an empty directory at the mount point
+    # instead of erroring, which would hand Renovate an unreadable "config file" rather than
+    # refuse. Fail loudly here instead of finding that out from Renovate's own error, or
+    # worse, from `optional` silently falling back to its built-in defaults.
     preset_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/../renovate" && pwd)"
+    [[ -f "${preset_dir}/preset.js" ]] || {
+      echo "expected ${preset_dir}/preset.js to exist; refusing to flip RENOVATE_REQUIRE_CONFIG" \
+        "to optional with no config actually mounted" >&2
+      return 1
+    }
     preset_mount=(-v "${preset_dir}/preset.js:/renovate-preset.js:ro" -e RENOVATE_CONFIG_FILE=/renovate-preset.js)
     require_config=optional
   fi
