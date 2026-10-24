@@ -20,11 +20,12 @@ on `pull_request`, so a fork's PR can trigger only GitHub's read-only CodeQL sca
 
 | Path | What it is |
 | --- | --- |
-| `.github/workflows/renovate.yml` | Renovate in fork mode. Pilot: manual dispatch only, one repository per run (`only`), or `fleet` (the default: every discovered repository, not tap) or `all`; the daily schedule returns when the pilot ends |
+| `.github/workflows/renovate.yml` | Renovate in fork mode. Daily at 07:15 UTC, or by dispatch: one repository (`only`), or `fleet` (the default: the rotation's next slice of the discovered repositories, not tap), or `all` |
 | `renovate/global.js` | Renovate's global config: tap (named) plus the discovered repositories, the bot identity (from environment variables), PR limits, fork mode, no onboarding, no dashboard |
 | `renovate/preset.js` | The shared repository config every discovered repository gets, including tap's boot-record pin manager |
 | `renovate/boot-records/` | The digest refresh Renovate runs after bumping an in-package boot record: `refresh.py`, tap's `tap.boot_records` vendored at a pinned commit (`tap/`, `tap-vendor.json`), `vendor.py` to check or move the pin, and its offline tests |
 | `.github/workflows/release-please.yml` | release-please stage 1 (`release-pr --fork`) over the discovered repositories plus tap. Pilot: manual dispatch only |
+| `scripts/next_batch.py` | Which slice of the fleet a Renovate run covers: the one after the last successful auto run, read from the run history (see [The ramp](#the-ramp)) |
 | `scripts/discover_fleet.py` | Which repositories both bots and `approve_bot_runs.py` act on: see [The fleet](#the-fleet) |
 | `scripts/cut-release.sh` | release-please stage 2 (`github-release`), run by the maintainer. Dry run by default |
 | `scripts/approve_bot_runs.py` | Approves the fork bot's PR workflow runs that wait for "Approve and run", by fixed rules. Dry run by default |
@@ -338,6 +339,43 @@ repository changes. Removing the topic, or archiving the repository, takes it ou
   github-core-tap has them, plus the self-entry `extra-files` entry in "Release PRs"
   above when the plugin has a CI record, and the next run picks it up. A repository that still runs its
   own `release-please.yml` is skipped with a warning until that workflow is retired.
+
+## The ramp
+
+On 2026-09-28 the fork bot's first fleet-wide runs opened about 50 PRs and renamed 22 forks in
+twenty minutes, and GitHub's anti-abuse flagged the two-day-old account: it and everything it
+created went invisible to everyone else. So both jobs pace themselves:
+
+- **Renovate** covers one slice of the fleet per run (`batch`, default `auto`: about three
+  repositories, 8 slices). It runs daily (07:15 UTC) and keeps going until you stop it, so a
+  backlog, or a long absence, is worked off by leaving the schedule alone.
+  `batch=all` removes the slicing; don't, on a young account.
+  - **The rotation survives absence.** `scripts/next_batch.py` takes the slice after the one the
+    newest *successful* auto run covered, read from that run's job name (`renovate (auto 3/8)`).
+    A run that fails, is cancelled, or is never approved moves nothing, so the same slice is tried
+    again; a gap of a day or three months changes nothing; and unlike `run number mod 8` it cannot
+    alias (approving every 8th run would pick one slice forever). The run history is the only
+    state: no artifact to expire, no variable to write. A run that names its own slice, `all`, or
+    one repository (`only`) does not move the rotation. Without a past auto run it starts at 1/8.
+  - **Each daily run needs approval.** Every run of the `bots` environment needs criticalsec's
+    approval (above). An unapproved run does nothing and loses nothing; the rotation resumes at
+    the first approved one.
+- **release-please** opens at most `MAX_NEW_PRS` (3) new release PRs per run, sleeping a random
+  `PAUSE_MIN`..`PAUSE_MAX` (120-300) seconds after each. Repositories past the cap are deferred to the next run with a
+  notice. Refreshing an existing release PR is not capped. The order is shuffled each run, so the
+  cap cannot keep serving the same first repositories and starve the rest.
+
+- **Renovate** also starts each run after a random 0-10 minute delay, so scheduled runs never
+  land on a fixed rhythm.
+
+**The same rule applies to people.** Any fleet-wide change made by hand, from any account
+(notgeorge included), goes one repository at a time with random gaps: open PRs 3-7 minutes
+apart, merge them 1-3 minutes apart, pilot on one repository and stop the batch if it is not
+green, and stop the batch on any failure to open a PR. The first hand-run fleet pin bump
+(2026-09-28, 24 repositories) was done exactly this way and drew no attention.
+
+After any bot run, check that one of its PRs resolves for someone other than the bot. A green
+run means only that the API calls succeeded.
 
 ## Running a job by hand
 

@@ -29,26 +29,28 @@ FLEET = {"core": ["tap"], "fleet": ["dcom-tap", "tap-plugin-github-core"]}
 
 @unittest.skipUnless(NODE, "node is not on PATH")
 class GlobalJsTest(unittest.TestCase):
-    def load(self, fleet: object, only: str = "all") -> dict[str, object]:
+    def load(self, fleet: object, only: str = "all", batch: str | None = None) -> dict[str, object]:
         env = {
             "PATH": os.environ.get("PATH", ""),
             "FORK_BOT_LOGIN": "tap-renovate-remote",
             "FORK_BOT_ID": "334543231",
             "ORG_BOTS_ONLY": only,
         }
+        if batch is not None:
+            env["ORG_BOTS_BATCH"] = batch
         if fleet is not None:
             env["ORG_BOTS_FLEET"] = fleet if isinstance(fleet, str) else json.dumps(fleet)
         proc = subprocess.run([NODE, "-e", LOAD, str(ROOT / "renovate" / "global.js")], env=env,
                               capture_output=True, text=True, check=True, timeout=60)
         return json.loads(proc.stdout)
 
-    def repos(self, fleet: object, only: str = "all") -> list[str]:
-        out = self.load(fleet, only)
+    def repos(self, fleet: object, only: str = "all", batch: str | None = None) -> list[str]:
+        out = self.load(fleet, only, batch)
         self.assertIn("ok", out, out)
         return [r[0] for r in out["ok"]]  # type: ignore[union-attr]
 
-    def refused(self, fleet: object, only: str = "all") -> str:
-        out = self.load(fleet, only)
+    def refused(self, fleet: object, only: str = "all", batch: str | None = None) -> str:
+        out = self.load(fleet, only, batch)
         self.assertIn("error", out, out)
         return str(out["error"])
 
@@ -93,6 +95,29 @@ class GlobalJsTest(unittest.TestCase):
     def test_named_entry_wins_over_discovery(self) -> None:
         out = self.load({"fleet": ["ok", "tap"]})
         self.assertEqual(out["ok"], [["unified-systems-com/tap", 10, False], ["unified-systems-com/ok", None, True]])
+
+    # The ramp (2026-09-28: a whole-fleet burst got the bot account flagged).
+    BIG = {"core": ["tap"], "fleet": [f"p{i}-tap" for i in range(1, 8)]}
+
+    def test_batches_partition_the_fleet(self) -> None:
+        seen: list[str] = []
+        for i in range(1, 4):
+            part = self.repos(self.BIG, "fleet", f"{i}/3")
+            self.assertLessEqual(len(part), 3, part)
+            seen += part
+        self.assertEqual(sorted(seen), sorted(f"unified-systems-com/p{i}-tap" for i in range(1, 8)))
+
+    def test_one_repo_run_ignores_the_batch(self) -> None:
+        self.assertEqual(self.repos(self.BIG, "p5-tap", "1/8"), ["unified-systems-com/p5-tap"])
+
+    def test_unset_or_all_batch_is_the_whole_list(self) -> None:
+        self.assertEqual(len(self.repos(self.BIG, "fleet")), 7)
+        self.assertEqual(len(self.repos(self.BIG, "fleet", "all")), 7)
+
+    def test_malformed_batch_refused(self) -> None:
+        for batch in ("0/3", "4/3", "1", "a/b", "1/0", "-1/3"):
+            with self.subTest(batch=batch):
+                self.assertIn("ORG_BOTS_BATCH", self.refused(self.BIG, "fleet", batch))
 
 
 if __name__ == "__main__":

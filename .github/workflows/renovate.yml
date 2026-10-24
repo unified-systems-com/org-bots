@@ -24,16 +24,23 @@
 name: renovate
 
 on:
-  # Pilot: hand-run only, one repository at a time. The daily schedule
-  #   schedule:
-  #     - cron: "15 7 * * *"   # daily 07:15 UTC
-  # comes back, fleet-wide, in the PR that ends the pilot.
+  # The daily run works through the fleet one slice at a time (scripts/next_batch.py), so a
+  # backlog, or a long absence, is worked off by simply letting the schedule keep running.
+  # Every run of the `bots` environment still needs criticalsec's approval (see README, "The
+  # ramp"); a run nobody approves moves nothing and the next one takes the same slice.
+  schedule:
+    - cron: "15 7 * * *"   # daily 07:15 UTC, then a random 0-10 minute start
   workflow_dispatch:
     inputs:
       only:
         description: "Run on this ONE repository (name, no owner): tap or a discovered one. \"fleet\" for every discovered repository (not tap); \"all\" for those plus tap."
         required: false
         default: "fleet"
+        type: string
+      batch:
+        description: "Fleet slice for a fleet/all run: <i>/<n> (every n-th repository from the i-th), \"auto\" (the slice after the last successful auto run, wrapping after 8, so a gap changes nothing), or \"all\" (the whole fleet at once: do not, on a young account)."
+        required: false
+        default: "auto"
         type: string
       logLevel:
         description: "Renovate log level (debug for troubleshooting)"
@@ -55,8 +62,11 @@ jobs:
     timeout-minutes: 5
     permissions:
       contents: read   # check out this repository (the discovery script)
+      actions: read    # read this workflow's past runs: the rotation's only state
     outputs:
       fleet: ${{ steps.discover.outputs.fleet }}
+      batch: ${{ steps.batch.outputs.batch }}
+      label: ${{ steps.batch.outputs.label }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -68,8 +78,18 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
         run: python3 -I scripts/discover_fleet.py --github-output fleet
 
+      - name: Choose the fleet slice (the ramp)
+        id: batch
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          BATCH_INPUT: ${{ inputs.batch || 'auto' }}
+          ONLY_INPUT: ${{ inputs.only || 'fleet' }}
+        run: python3 -I scripts/next_batch.py --batch "$BATCH_INPUT" --only "$ONLY_INPUT" --github-output
+
   renovate:
-    name: renovate (fleet)
+    # The label is the rotation's memory: scripts/next_batch.py reads it back from the run
+    # history, so keep the form `renovate (auto <i>/<n>)`.
+    name: renovate (${{ needs.discover.outputs.label }})
     needs: discover
     runs-on: ubuntu-latest
     timeout-minutes: 60
@@ -80,6 +100,11 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
+
+      - name: Start at a random moment (the ramp)
+        # A scheduled run fires at the same minute every time; a random 0-10 minute start
+        # keeps the bot's activity from landing on a fixed rhythm.
+        run: sleep $(( RANDOM % 601 ))
 
       - name: Run Renovate
         uses: renovatebot/github-action@9fea9f0fbf80401026d11d03911d62b1f70fef1f # v46.3.3
@@ -99,11 +124,12 @@ jobs:
           # pilot's one-repository narrowing) and the bot identity, so pass those into the
           # container too. The rest is the action's default
           # allow-list.
-          env-regex: "^(?:RENOVATE_\\w+|LOG_LEVEL|GITHUB_COM_TOKEN|NODE_OPTIONS|NO_COLOR|ORG_BOTS_FLEET|ORG_BOTS_ONLY|FORK_BOT_LOGIN|FORK_BOT_ID)$"
+          env-regex: "^(?:RENOVATE_\\w+|LOG_LEVEL|GITHUB_COM_TOKEN|NODE_OPTIONS|NO_COLOR|ORG_BOTS_FLEET|ORG_BOTS_ONLY|ORG_BOTS_BATCH|FORK_BOT_LOGIN|FORK_BOT_ID)$"
         env:
           RENOVATE_FORK_TOKEN: ${{ secrets.FORK_BOT_TOKEN }}
           FORK_BOT_LOGIN: ${{ vars.FORK_BOT_LOGIN }}
           FORK_BOT_ID: ${{ vars.FORK_BOT_ID }}
           LOG_LEVEL: ${{ inputs.logLevel || 'info' }}
           ORG_BOTS_FLEET: ${{ needs.discover.outputs.fleet }}
-          ORG_BOTS_ONLY: ${{ inputs.only }}
+          ORG_BOTS_ONLY: ${{ inputs.only || 'fleet' }}
+          ORG_BOTS_BATCH: ${{ needs.discover.outputs.batch }}
