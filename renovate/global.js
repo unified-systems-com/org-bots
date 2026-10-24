@@ -119,8 +119,8 @@ if (ONLY && repositories.length !== 1) {
 // The ramp. On 2026-09-28 the fork bot's first fleet-wide run opened about 50 PRs in 20
 // minutes, and GitHub's anti-abuse flagged the two-day-old account. So a fleet or all run
 // covers ONE slice of the list: ORG_BOTS_BATCH=<i>/<n> keeps every n-th repository starting
-// at the i-th (1-based), so n runs cover the whole list once. The workflow sets it (from the
-// UTC hour unless the dispatch names one); "all" or unset means no slicing, for a one-repo run.
+// at the i-th (1-based), so n runs cover the whole list once. The workflow sets it (scripts/next_batch.py:
+// the slice after the last successful auto run, unless the dispatch names one); "all" or unset means no slicing, for a one-repo run.
 const BATCH = (process.env.ORG_BOTS_BATCH || "all").trim();
 let batched = repositories;
 if (!ONLY && BATCH !== "all") {
