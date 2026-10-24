@@ -32,8 +32,8 @@ class GlobalJsTest(unittest.TestCase):
     def load(self, fleet: object, only: str = "all") -> dict[str, object]:
         env = {
             "PATH": os.environ.get("PATH", ""),
-            "FORK_BOT_LOGIN": "tap-renovate-remote",
-            "FORK_BOT_ID": "334543231",
+            "FORK_BOT_LOGIN": "tap-renovate-runner",
+            "FORK_BOT_ID": "347434375",
             "ORG_BOTS_ONLY": only,
         }
         if fleet is not None:

@@ -97,9 +97,9 @@ ORG = "unified-systems-com"
 # The fork bot: the machine user Renovate and release-please run as (org-bots' `bots`
 # environment variables FORK_BOT_LOGIN / FORK_BOT_ID). Every identity check uses the numeric
 # id; the login is only used to build the `head=<owner>:<branch>` PR query, whose results are
-# then checked by id. Verify with: gh api users/tap-renovate-remote --jq '{id,type}'
-BOT_ID = 334543231
-BOT_LOGIN = "tap-renovate-remote"
+# then checked by id. Verify with: gh api users/tap-renovate-runner --jq '{id,type}'
+BOT_ID = 347434375
+BOT_LOGIN = "tap-renovate-runner"
 BOT_TYPE = "User"
 
 # Paths Renovate and release-please legitimately change in a fleet repository. Glob patterns
