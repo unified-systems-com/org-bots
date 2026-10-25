@@ -24,6 +24,11 @@
 #             trailer, and force-pushed with a lease. That is your tooling applying your
 #             trailer at your command (CONTRIBUTING "Sign-Off"); the certification is still
 #             your review and merge of the PR.
+#   release   also refreshes the boot-record digests. release-please moves a plugin's own
+#             version inside its in-package `ci` record, which makes the sha256 declared in
+#             tap-plugin.toml stale and reds the release PR's conformance check. The refresh
+#             (renovate/boot-records/refresh.py, the same tool Renovate runs) is folded into the
+#             SAME amended commit, so the branch still carries one signed commit.
 #
 # Pacing (tap spec req-cicd-fleet-bot-paced), enforced here, not left to the caller:
 #   - one repository per invocation;
@@ -174,6 +179,17 @@ run_release() {
   scrub "$out"
 }
 
+# Regenerate the boot-record digests in a checkout (a release branch, whose own-version bump
+# leaves them stale). Standard library only, run with -I as the Renovate task does. Prints what
+# moved; returns 1 when the digests still do not match afterwards.
+refresh_record_digests() {
+  local dir=$1 refresh
+  refresh="$(cd "$(dirname "${BASH_SOURCE[0]}")/../renovate/boot-records" && pwd)/refresh.py"
+  [[ -f "$refresh" ]] || { echo "expected ${refresh} to exist" >&2; return 1; }
+  (cd "$dir" && python3 -I "$refresh") || return 1
+  git -C "$dir" add -u
+}
+
 # Amend each tool-written branch's single unsigned commit with your sign-off and an issue-link
 # trailer. Skips anything that is not exactly one commit of yours over the default branch.
 sign_off() {
@@ -189,9 +205,21 @@ sign_off() {
     head_email="$(git -C "$work/r" log -1 --format=%ae "origin/${b}")"
     body="$(git -C "$work/r" log -1 --format=%B "origin/${b}")"
     [[ "$head_email" == "$ME_EMAIL" ]] || { echo "skip ${b}: last commit is not yours (${head_email})"; continue; }
-    grep -q '^Signed-off-by:' <<< "$body" && { echo "ok ${b}: already signed"; continue; }
     git -C "$work/r" checkout --quiet -B "$b" "origin/${b}"
     old="$(git -C "$work/r" rev-parse HEAD)"
+    if [[ "$prefix" == "release-please--" ]]; then
+      refresh_record_digests "$work/r" || echo "warn ${b}: the boot-record digests could not be refreshed; conformance may fail" >&2
+    fi
+    if grep -q '^Signed-off-by:' <<< "$body"; then
+      # Already signed. Do not add a second commit (the one-commit rule); only say if the digests are stale.
+      if ! git -C "$work/r" diff --cached --quiet; then
+        echo "warn ${b}: signed, but the boot-record digests are stale; re-run release so the branch is regenerated" >&2
+      else
+        echo "ok ${b}: already signed"
+      fi
+      git -C "$work/r" reset --quiet --hard
+      continue
+    fi
     git -C "$work/r" -c user.name="$ME_NAME" -c user.email="$ME_EMAIL" \
       commit --quiet --amend --no-edit -s --trailer "$trailer"
     GH_SIGN_TOKEN="$TOKEN" git -C "$work/r" -c credential.helper= \
