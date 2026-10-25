@@ -40,7 +40,13 @@ on:
   #   schedule:
   #     - cron: "23 * * * *"   # hourly
   # comes back in the PR that ends the pilot.
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      batch:
+        description: "Fleet slice: <i>/<n> (every n-th discovered repository from the i-th), \"auto\" (the slice after the last successful auto run, wrapping after 8, so a gap changes nothing), or \"all\" (the whole fleet; MAX_NEW_PRS still caps new release PRs)."
+        required: false
+        default: "auto"
+        type: string
 
 permissions: {}
 
@@ -55,8 +61,11 @@ jobs:
     timeout-minutes: 5
     permissions:
       contents: read   # check out this repository (the discovery script)
+      actions: read    # read this workflow's past runs: the rotation's only state
     outputs:
       fleet: ${{ steps.discover.outputs.fleet }}
+      batch: ${{ steps.batch.outputs.batch }}
+      label: ${{ steps.batch.outputs.label }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -68,8 +77,18 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
         run: python3 -I scripts/discover_fleet.py --github-output fleet
 
+      - name: Choose the fleet slice (the ramp)
+        id: batch
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          BATCH_INPUT: ${{ inputs.batch || 'auto' }}
+        run: python3 -I scripts/next_batch.py --workflow release-please.yml --job release-please --batch "$BATCH_INPUT" --github-output
+
   release-please:
-    name: release-please (discovered repositories)
+    # The label is the rotation's memory: scripts/next_batch.py reads it back from the run
+    # history, so keep the form `release-please (auto <i>/<n>)`. Distinct from Renovate's
+    # `renovate (auto <i>/<n>)`, so the two rotations never interfere.
+    name: release-please (${{ needs.discover.outputs.label }})
     needs: discover
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -97,6 +116,8 @@ jobs:
           # (the "own lane" check below). Moving tap here also needs its uv.lock refresh
           # solved and its PR-check policy decided: README, "tap".
           FLEET_JSON: ${{ needs.discover.outputs.fleet }}
+          # This run's slice of the fleet, <i>/<n> or "all" (scripts/next_batch.py).
+          BATCH: ${{ needs.discover.outputs.batch }}
           # The ramp: at most MAX_NEW_PRS new release PRs per run, and a RANDOM pause of
           # PAUSE_MIN..PAUSE_MAX seconds after each, so no two runs have the same rhythm.
           # The first fleet run opened 22 at once and GitHub flagged the bot account
@@ -122,11 +143,24 @@ jobs:
           askpass_helper='!f() { echo username=x-access-token; echo "password=${RP_TOKEN}"; }; f'
           failed=()
           new_prs=0
-          # Shuffled, so the per-run cap cannot keep serving the same first repositories and
-          # starve the rest: over several runs every repository comes up.
-          mapfile -t repos < <(jq -r '(.fleet + .core)[]' <<< "$FLEET_JSON" | shuf)
+          # The slice is cut from the SORTED list, so it is the same set on every run (every
+          # n-th name from the i-th, as renovate/global.js cuts ORG_BOTS_BATCH). "all" is no cut.
+          if [[ "$BATCH" == "all" ]]; then
+            slice_i=1; slice_n=1
+          elif [[ "$BATCH" =~ ^([1-9][0-9]*)/([1-9][0-9]*)$ ]] \
+               && (( BASH_REMATCH[1] <= BASH_REMATCH[2] )); then
+            slice_i=${BASH_REMATCH[1]}; slice_n=${BASH_REMATCH[2]}
+          else
+            echo "::error::the fleet slice is unset or malformed"
+            exit 1
+          fi
+          # Shuffled after the cut, so the per-run cap cannot keep serving the same first
+          # repositories and starve the rest: over several runs every repository comes up.
+          mapfile -t repos < <(jq -r --argjson i "$slice_i" --argjson n "$slice_n" \
+            '(.fleet + .core) | sort | to_entries[] | select(.key % $n == $i - 1) | .value' \
+            <<< "$FLEET_JSON" | shuf)
           if (( ${#repos[@]} == 0 )); then
-            echo "::error::discovery produced no repositories"
+            echo "::error::discovery produced no repositories for slice ${BATCH}"
             exit 1
           fi
           for name in "${repos[@]}"; do
