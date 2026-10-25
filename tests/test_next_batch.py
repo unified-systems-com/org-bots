@@ -63,6 +63,34 @@ class RotationTest(unittest.TestCase):
         self.assertIsNone(nb.last_auto_label([[]]))
 
 
+class JobPrefixTest(unittest.TestCase):
+    def test_each_job_reads_only_its_own_label(self) -> None:
+        both = [["renovate (auto 5/8)", "release-please (auto 2/8)"]]
+        self.assertEqual(nb.last_auto_label(both), "auto 5/8")
+        self.assertEqual(nb.last_auto_label(both, "release-please"), "auto 2/8")
+
+    def test_release_please_rotation_ignores_renovate_runs(self) -> None:
+        renovate_only = [["renovate (auto 6/8)"]]
+        self.assertEqual(nb.choose("auto", "fleet", lambda: renovate_only, job="release-please"),
+                         ("1/8", "auto 1/8"))
+
+    def test_release_please_rotation_advances(self) -> None:
+        h = [["discover (tap-plugin topic)", "release-please (auto 4/8)"]]
+        self.assertEqual(nb.choose("auto", "fleet", lambda: h, job="release-please"), ("5/8", "auto 5/8"))
+
+    def test_the_old_static_job_name_is_not_a_label(self) -> None:
+        h = [["release-please (discovered repositories)"]]
+        self.assertIsNone(nb.last_auto_label(h, "release-please"))
+
+    def test_the_job_prefix_is_matched_literally(self) -> None:
+        self.assertIsNone(nb.last_auto_label([["releaseXplease (auto 1/8)"]], "release.please"))
+
+    def test_bad_workflow_or_job_is_refused(self) -> None:
+        with contextlib.redirect_stderr(io.StringIO()):
+            self.assertEqual(nb.main(["--workflow", "../x.yml"]), 1)
+            self.assertEqual(nb.main(["--job", "a b"]), 1)
+
+
 class ExplicitTest(unittest.TestCase):
     def none(self) -> list[list[str]]:
         raise AssertionError("an explicit choice must not read the history")
