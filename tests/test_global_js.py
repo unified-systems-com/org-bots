@@ -29,13 +29,15 @@ FLEET = {"core": ["tap"], "fleet": ["dcom-tap", "tap-plugin-github-core"]}
 
 @unittest.skipUnless(NODE, "node is not on PATH")
 class GlobalJsTest(unittest.TestCase):
-    def load(self, fleet: object, only: str = "all", batch: str | None = None) -> dict[str, object]:
+    def load(self, fleet: object, only: str = "all", batch: str | None = None,
+             bot: dict[str, str] | None = None) -> dict[str, object]:
         env = {
             "PATH": os.environ.get("PATH", ""),
-            "FORK_BOT_LOGIN": "tap-renovate-runner",
-            "FORK_BOT_ID": "347434375",
+            "RENOVATE_BOT_LOGIN": "tap-renovate[bot]",
+            "RENOVATE_BOT_ID": "353051615",
             "ORG_BOTS_ONLY": only,
         }
+        env.update(bot or {})
         if batch is not None:
             env["ORG_BOTS_BATCH"] = batch
         if fleet is not None:
@@ -61,6 +63,20 @@ class GlobalJsTest(unittest.TestCase):
             ["unified-systems-com/dcom-tap", None, True],
             ["unified-systems-com/tap-plugin-github-core", None, True],
         ])
+
+    def test_bot_identity_required_and_checked(self) -> None:
+        for bot in ({"RENOVATE_BOT_LOGIN": ""}, {"RENOVATE_BOT_ID": ""}, {"RENOVATE_BOT_ID": "0"},
+                    {"RENOVATE_BOT_ID": "12 3"}, {"RENOVATE_BOT_LOGIN": "x y"},
+                    {"RENOVATE_BOT_LOGIN": "tap-renovate[bot"}):
+            with self.subTest(bot=bot):
+                out = self.load(FLEET, bot=bot)
+                self.assertIn("RENOVATE_BOT_LOGIN and RENOVATE_BOT_ID", str(out.get("error")))
+        self.assertIn("ok", self.load(FLEET, bot={"RENOVATE_BOT_LOGIN": "tap-renovate"}))
+
+    def test_no_fork_mode_in_the_file(self) -> None:
+        text = (ROOT / "renovate" / "global.js").read_text()
+        for needle in ("forkCreation", "FORK_BOT", "RENOVATE_FORK_TOKEN"):
+            self.assertNotIn(needle, text)
 
     def test_no_list_in_the_file(self) -> None:
         text = (ROOT / "renovate" / "global.js").read_text()
