@@ -1,13 +1,15 @@
 # org-bots
 
-This repository runs the unified-systems-com organisation's two bots from one small place, and
-since fork mode it holds **no credential that can write to an org repository**:
+This repository runs the unified-systems-com organisation's two bots from one small place.
+Renovate runs in fork mode and holds **no credential that can write to an org repository**.
+release-please runs as the `tap-release-please` GitHub App, whose key is the one credential here
+that can:
 
 | Bot | Runs as | Where | Does |
 | --- | --- | --- | --- |
 | Renovate | the fork bot (a machine user) | `.github/workflows/renovate.yml` | Opens dependency-update PRs from the bot's forks |
-| release-please, stage 1 | the fork bot | `.github/workflows/release-please.yml` | Opens and refreshes each repository's release PR from the bot's fork |
-| release-please, stage 2 | the maintainer, with their own `gh` login | `scripts/cut-release.sh` | Tags the merged release PR and publishes the GitHub Release |
+| release-please | the `tap-release-please` GitHub App (a short-lived token per run) | `.github/workflows/release-please.yml` | Opens and refreshes each repository's release PR in the repository itself, and tags and publishes the release once a human has merged that PR |
+| release-please, for tap | the maintainer, with their own `gh` login | `scripts/run-as-maintainer.sh`, `scripts/cut-release.sh` | The same two steps for tap, by hand, until tap's PR checks name the App's bot (see "tap") |
 
 The repository is **public** (since 2026-09-28). Nothing here is secret, and the controls are
 designed to hold with the design known, not to depend on it being hidden. Merges to `main` need
@@ -24,10 +26,10 @@ on `pull_request`, so a fork's PR can trigger only GitHub's read-only CodeQL sca
 | `renovate/global.js` | Renovate's global config: tap (named) plus the discovered repositories, the bot identity (from environment variables), PR limits, fork mode, no onboarding, no dashboard |
 | `renovate/preset.js` | The shared repository config every discovered repository gets, including tap's boot-record pin manager |
 | `renovate/boot-records/` | The digest refresh Renovate runs after bumping an in-package boot record: `refresh.py`, tap's `tap.boot_records` vendored at a pinned commit (`tap/`, `tap-vendor.json`), `vendor.py` to check or move the pin, and its offline tests |
-| `.github/workflows/release-please.yml` | release-please stage 1 (`release-pr --fork`) over the discovered repositories plus tap. Pilot: manual dispatch only, one rotation slice per run (`batch`, default `auto`) |
+| `.github/workflows/release-please.yml` | release-please as the App, over the discovered repositories (not tap): `github-release`, then `release-pr`, then the boot-record digest refresh. Pilot: manual dispatch only, one rotation slice per run (`batch`, default `auto`) or one repository (`only`) |
 | `scripts/next_batch.py` | Which slice of the fleet a Renovate run covers: the one after the last successful auto run, read from the run history (see [The ramp](#the-ramp)) |
 | `scripts/discover_fleet.py` | Which repositories both bots and `approve_bot_runs.py` act on: see [The fleet](#the-fleet) |
-| `scripts/cut-release.sh` | release-please stage 2 (`github-release`), run by the maintainer. Dry run by default |
+| `scripts/cut-release.sh` | `github-release` run by the maintainer, for tap (the fleet's tags come from the App). Dry run by default |
 | `scripts/approve_bot_runs.py` | Approves the fork bot's PR workflow runs that wait for "Approve and run", by fixed rules. Dry run by default |
 | `tests/` | Offline tests for `approve_bot_runs.py`, `discover_fleet.py` and `renovate/global.js` (fixture JSON, no network; the `global.js` tests need `node` and are skipped without it): `python3 -m unittest discover -s tests` |
 | `renovate/boot-records/test_refresh.py` | Offline tests for the digest refresh and the vendored pin: `python3 -m unittest discover -s renovate/boot-records` (Python 3.11 or later, for `tomllib`) |
@@ -63,19 +65,15 @@ was first applied.
 
 ## How fork mode works
 
-The fork bot is a GitHub **user** account that is not an org member and has no role on any org
-repository. For each repository it works on, it forks the repository into its own account,
-pushes its branch there, and opens the PR from the fork, exactly as an outside contributor would.
-The target repository then treats that PR like any fork PR: its own checks run, a human reviews,
-a human merges.
+Renovate runs in fork mode. (release-please used to: it moved to the App on 2026-11-05, see "How
+release-please runs" below.) The fork bot is a GitHub **user** account that is not an org member
+and has no role on any org repository. For each repository it works on, it forks the repository
+into its own account, pushes its branch there, and opens the PR from the fork, exactly as an
+outside contributor would. The target repository then treats that PR like any fork PR: its own
+checks run, a human reviews, a human merges.
 
-- **Renovate** does this natively: the workflow passes the bot's token as both the platform
-  token and `RENOVATE_FORK_TOKEN`.
-- **release-please** does it with `release-pr --fork`.
-- Both use the same fork. An account can hold only one fork of a repository. Renovate names its
-  fork `unified-systems-com-_-<repo>`, while release-please's fork code only works when the fork
-  is named `<repo>`. So the release-please job renames the bot's fork to `<repo>` when needed.
-  Renovate finds its fork by owner, not by name, so the rename does not disturb it.
+Renovate does this natively: the workflow passes the bot's token as both the platform token and
+`RENOVATE_FORK_TOKEN`. It names its fork `unified-systems-com-_-<repo>`.
 
 ### What a maintainer has to do by hand
 
@@ -84,72 +82,97 @@ a human merges.
   repository's Actions setting, that can apply to every PR from an outside account, not only the
   first. Until checks run, the PR is not mergeable. Use `scripts/approve_bot_runs.py`, not the
   button (see "Approving the bot's runs").
-- **Label each new release PR `autorelease: pending`.** Applying a label needs triage access
-  ([GitHub docs, "Managing labels"](https://docs.github.com/en/issues/using-labels-and-milestones-to-track-work/managing-labels):
-  "Anyone with triage access to a repository can apply and dismiss labels"), so the bot opens
-  release PRs with `--skip-labeling`. release-please finds its own open release PR, and later the
-  merged one, by that label alone (release-please 17.11.2, `build/src/manifest.js`,
-  `findOpenReleasePullRequests` and `findMergedReleasePullRequests`). Without the label, a later
-  run would push new commits to the branch but leave the old title and body, and the body is what
-  stage 2 reads the version from. So the release-please job **refuses to refresh** an unlabelled
-  release PR from the bot's fork and names it in the run's errors. `cut-release.sh` adds the label
-  to an unlabelled merged release PR itself before tagging.
+
+## How release-please runs
+
+The `release-please` job runs as the org-owned `tap-release-please` GitHub App, installed on
+selected repositories (the plugin repositories and tap), not on all of them. Each run:
+
+1. mints an installation token for ONLY the repositories in that run's slice, with `contents:
+   write` and `pull-requests: write` and nothing else (no `workflows`, so it cannot edit a
+   workflow file). The token lasts an hour and is revoked when the job ends;
+2. per repository, runs `release-please github-release` (tags and publishes a release whose PR a
+   human has merged), then `release-please release-pr` (opens or refreshes the one rolling release
+   PR), then the boot-record digest refresh. The PR is on a branch in the repository itself,
+   labelled `autorelease: pending` by release-please, so the repository's own checks run on it
+   without an "Approve and run" step and release-please finds it again by the label.
+
+The App's PRs and commits are authored by `tap-release-please[bot]` (account type `Bot`). A
+repository's own checks that exempt bot authors by id need that id (see "tap").
+
+The App must be installed on each fleet repository: see "Adding a repository". A token mint for a
+slice that includes an uninstalled repository fails the whole slice, loudly.
 
 ## Threat model
 
 **What an attacker wants here:** a credential that can push to, or tag in, org repositories.
-There is none here any more.
+There is one here: the release-please App's private key. Renovate holds none.
 
 **Who holds write:**
 
 | Credential | Held by | Can write to |
 | --- | --- | --- |
-| `FORK_BOT_TOKEN` | the `bots` environment of this repository | the fork bot's own forks only. On org repositories it can do what any GitHub user can: fork, and open PRs and issues |
-| The maintainer's `gh` login | the maintainer's machine | whatever the maintainer can; used by `cut-release.sh` to label, tag and publish |
-| `TAP_RENOVATE_PRIVATE_KEY`, `TAP_RELEASE_PLEASE_PRIVATE_KEY` | **deleted from the `bots` environment on 2026-09-28**; the Apps and tap's own copies remain until tap migrates | every org repository the two Apps are installed on. See "Retiring the App keys" |
+| `TAP_RELEASE_PLEASE_PRIVATE_KEY` | the `bots` environment of this repository | mints installation tokens for the `tap-release-please` App, on the repositories it is installed on only: `contents: write` (branches, tags, releases) and `pull-requests: write`; no `workflows` permission, no administration |
+| `FORK_BOT_TOKEN` | the `bots` environment of this repository | the fork bot's own forks only (Renovate). On org repositories it can do what any GitHub user can: fork, and open PRs and issues |
+| The maintainer's `gh` login | the maintainer's machine | whatever the maintainer can; used by `cut-release.sh` and `run-as-maintainer.sh` for tap |
+| `TAP_RENOVATE_PRIVATE_KEY` | deleted from the `bots` environment on 2026-09-28; its App is not installed on the org (checked 2026-11-05) | nothing |
 
-**Where the bot token is.** `FORK_BOT_TOKEN` is a secret of the `bots` **environment**, never a
-repository-level secret. The environment's deployment branch policy allows `main` only, so the
-token reaches only a workflow already merged to `main`, and getting a workflow onto `main` takes a
-PR the code owner reviewed. The bot's login and numeric id are the environment **variables**
-`FORK_BOT_LOGIN` and `FORK_BOT_ID`: not sensitive, and read by `global.js` and the release-please
-job so the account plugs in without a code change.
+**Where the key is.** `TAP_RELEASE_PLEASE_PRIVATE_KEY` is a secret of the `bots` **environment**,
+never a repository-level secret, and the client ID is the environment variable
+`TAP_RELEASE_PLEASE_CLIENT_ID`. The environment's deployment branch policy allows `main` only, so
+the key reaches only a workflow already merged to `main`, and getting a workflow onto `main`
+takes a PR the code owner reviewed. `FORK_BOT_TOKEN` is held the same way, with the bot's login
+and numeric id as the variables `FORK_BOT_LOGIN` and `FORK_BOT_ID`.
 
-**What the token is.** A user token is not scoped per repository the way an App installation
-token is. What bounds it is the account: it has no role on any org repository, so its write
-reaches only its forks. The earlier fork-mode trial used a classic token with `public_repo` +
-`workflow` and an expiry. `workflow` is needed because the bot's fork branches carry the
-upstream's `.github/workflows` files. A fine-grained token is limited to repositories its owner
-(or the owner's orgs) own, so, per GitHub's documentation, it cannot open the PR upstream; that
-limit is not tested here.
+**What can run with the key.** For release-please, the CLI, installed with `npm ci
+--ignore-scripts` from a lockfile that pins every package by integrity hash, plus the runner's
+`gh`, plus the boot-record digest refresh, `renovate/boot-records/refresh.py`. For Renovate, the
+container pinned by image digest and the same refresh as its one post-upgrade command. Every
+action is pinned by full commit SHA, and every workflow starts from `permissions: {}` with a
+read-only `GITHUB_TOKEN` (`contents: read`, to check this repository out).
 
-**What can run with the token.** For Renovate, the Renovate container, pinned by image digest,
-and inside it one post-upgrade command, `renovate/boot-records/refresh.py` (see "Boot-record
-digests").
-For release-please, the CLI, installed with `npm ci --ignore-scripts` from a lockfile that pins
-every package by integrity hash, plus the runner's `gh` for the pre-checks. Every action is pinned
-by full commit SHA, and every workflow starts from `permissions: {}` with a read-only
-`GITHUB_TOKEN` (`contents: read`, to check this repository out).
+**What a stolen App key gets.** The ability to mint tokens for any repository the App is
+installed on, until the key is deleted in the App's settings: push branches, open PRs, and create
+tags and releases there. It does not get `main`, a merge, or a workflow-file edit, if the rulesets
+below hold. Revoke: App settings, Credentials, Key pairs: delete the key, generate a new one, and
+replace the secret.
 
-**What a stolen bot token gets.** PRs, issues and comments on public org repositories as the bot,
-and writes to the bot's own forks. Every such PR still needs "approve and run" to get checks, a
+**What the rulesets must keep true** (the App relies on them; recheck after changing a ruleset):
+the App is not a bypass actor on any branch ruleset, so it cannot push `main`; no branch rule
+blocks creating `release-please--*` branches; and the org `tag-protection` ruleset blocks
+deleting and updating a tag. Reading the org rulesets needs `admin:org`, so they are checked in
+the org's settings, not from here.
+
+**What a stolen fork-bot token gets.** PRs, issues and comments on public org repositories as the
+bot, and writes to the bot's own forks. Every such PR still needs "approve and run" to get checks, a
 review, and a human merge. Revoke the token on the bot account and replace the secret.
 
-**What the bots cannot do.** Neither bot merges anything or creates a tag. Renovate runs with
-automerge off. A release happens only when a maintainer merges the release PR in the target
-repository, through its own rulesets and checks, and then runs `cut-release.sh` with their own
-credential. The org `tag-protection` ruleset prevents a tag's deletion or update.
+**What the bots cannot do.** Neither bot merges anything. Renovate runs with automerge off and
+creates no tag. A release happens only when a maintainer merges the release PR in the target
+repository, through its own rulesets and checks; the App then tags that merge on its next run.
+The tag is the one write a human does not make by hand for a fleet repository.
 
 ## Who may change it
 
 - **Code:** anything merged to `main` needs a PR with the code owner's review (`.github/CODEOWNERS`,
   enforced by the org `org-require-pr` ruleset).
-- **The bot token, variables and the `bots` environment:** repository admins only, which in
+- **The App key, the bot token, variables and the `bots` environment:** repository admins only, which in
   practice means the org owner. Keep the admin list to the minimum.
 - **The fork bot account:** whoever holds its login. It must stay outside the org with no role on
   any org repository; giving it one gives this repository's token that write.
 
 ## Cutting a release
+
+**A fleet repository:** review and merge its release PR. That is the whole human step. The next
+release-please run that covers the repository tags the merge commit and publishes the GitHub
+Release, which starts the repository's tag-push workflows (`release-sbom.yml`). To do it now
+instead of waiting for the rotation:
+
+```sh
+gh workflow run release-please.yml -R unified-systems-com/org-bots -f only=github-core-tap
+```
+
+**tap, and any repository while the App is unavailable:**
 
 1. Merge the repository's release PR (it must carry `autorelease: pending`; the script adds it if
    it does not).
@@ -339,6 +362,12 @@ repository changes. Removing the topic, or archiving the repository, takes it ou
   github-core-tap has them, plus the self-entry `extra-files` entry in "Release PRs"
   above when the plugin has a CI record, and the next run picks it up. A repository that still runs its
   own `release-please.yml` is skipped with a warning until that workflow is retired.
+  **Also add the repository to the App's installation**, which a topic does not do: as an org
+  owner, `gh api -X PUT /user/installations/<installation id>/repositories/<repository id>`, or
+  Org settings, GitHub Apps, `tap-release-please`, Configure, Repository access. Until then the
+  slice that includes it fails at the token mint. (The installation id is in that Configure page's
+  URL; the repository id is `gh api repos/unified-systems-com/<name> --jq .id`. The API call is
+  from GitHub's documentation and has not yet been run here.)
 
 ## The ramp
 
@@ -386,36 +415,46 @@ run means only that the API calls succeeded.
 gh workflow run renovate.yml -R unified-systems-com/org-bots            # the default, fleet: every discovered repo, not tap; add -f logLevel=debug to troubleshoot
 gh workflow run renovate.yml -R unified-systems-com/org-bots -f only=gryphon-playground-tap   # another single fleet repo (must be discovered, or tap)
 gh workflow run renovate.yml -R unified-systems-com/org-bots -f only=all  # tap and every discovered repository (an empty value falls back to the default)
-gh workflow run release-please.yml -R unified-systems-com/org-bots
+gh workflow run release-please.yml -R unified-systems-com/org-bots                       # the rotation's next slice
+gh workflow run release-please.yml -R unified-systems-com/org-bots -f only=github-core-tap  # one discovered repository (not tap)
 gh workflow run fleet-conformance.yml -R unified-systems-com/org-bots   # the conformance sweep, off-schedule
 gh run list -R unified-systems-com/org-bots --limit 5
 ```
 
 ## Before the first run
 
-- Create the fork bot account (outside the org), and a token on it.
-- In this repository's `bots` environment: the secret `FORK_BOT_TOKEN`, and the variables
+- **Renovate:** create the fork bot account (outside the org), and a token on it. In this
+  repository's `bots` environment: the secret `FORK_BOT_TOKEN`, and the variables
   `FORK_BOT_LOGIN` and `FORK_BOT_ID` (`gh api users/<login> --jq .id`). A run with either
   variable missing stops before touching any repository.
+- **release-please:** create the `tap-release-please` GitHub App in the org (webhook off;
+  repository permissions Contents and Pull requests: Read and write, Metadata: Read-only, nothing
+  else), install it on the selected repositories, generate a key pair (Credentials, Key pairs), and
+  put it in the `bots` environment as the secret `TAP_RELEASE_PLEASE_PRIVATE_KEY`, with the
+  App's client ID as the variable `TAP_RELEASE_PLEASE_CLIENT_ID`. The bot's numeric id,
+  `gh api 'users/tap-release-please[bot]' --jq .id`, is the `BOT_ID` in the workflow and the id
+  a repository's bot-author checks need. Delete the downloaded `.pem`. Then check the rulesets
+  listed under "Threat model".
 
-## Retiring the App keys
+## The earlier Apps
 
-Once a fork-mode Renovate run and a fork-mode release PR have each landed and been merged, these
-`bots` environment secrets are dead weight and can be deleted:
-
-- `TAP_RENOVATE_PRIVATE_KEY`
-- `TAP_RELEASE_PLEASE_PRIVATE_KEY`
-
-Both were deleted on 2026-09-28. The Apps themselves stay while tap's own `renovate.yml` and
-`release-please.yml` use them (tap's repository secrets `RENOVATE_APP_ID`,
-`RENOVATE_APP_PRIVATE_KEY`, `TAP_RELEASE_PLEASE_APP_PRIVATE_KEY` and variable
-`TAP_RELEASE_PLEASE_APP_ID`). A key that is only deleted here can still mint tokens wherever it is
-held elsewhere: revoke it in the App's settings as well.
+release-please first ran as an App (the `tap-release-please` App, hourly, `github-release` then
+`release-pr`), then moved to fork mode on 2026-09-28 to hold no write key. On 2026-09-29 tap's own
+lanes were retired and the two Apps were to be uninstalled and their keys deleted (tap#857). The
+fork bot's account was then suspended (2026-11-04), and release-please returned to an App on
+2026-11-05, a NEW App with a new id, key and bot user. Anything that recorded the old App's bot
+id (315811092) is stale. A key that is only deleted from one place can still mint tokens wherever
+it is held elsewhere: revoke it in the App's settings as well.
 
 ## tap
 
-tap is in scope for both bots, named rather than discovered, for the same coverage as every other repository. Three things stand between
-it and a working fork-mode run.
+tap is in scope for both bots, named rather than discovered. The release-please workflow does
+not run on it yet: it is served by `scripts/run-as-maintainer.sh` and `scripts/cut-release.sh`.
+Before it can move to the App lane, tap's `tap/tap.pr-bots.json` needs an entry for
+`tap-release-please[bot]` under its new id (see the bot-id command under "Before the first run"),
+and tap's release PR title pattern (`[via maintainer-run]`) needs a decision. The notes below were
+written for fork mode and are kept for the history of those decisions; where they say "the bot's
+fork", an App-authored release branch is in tap itself.
 
 ### Open decision: tap's PR checks and a user-account bot
 
