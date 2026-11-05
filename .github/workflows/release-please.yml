@@ -243,10 +243,13 @@ jobs:
               failed+=("$repo"); continue
             fi
 
-            # 2. Open or refresh the rolling release PR. A new one is capped and paced.
+            # 2. Open or refresh the rolling release PR. A new one is capped and paced. Only a PR
+            # whose branch is in this repository counts: a fork PR can be named anything, so a
+            # `release-please--*` fork PR must neither count as "already has one" (which would skip
+            # the cap) nor be picked for the digest refresh.
             if ! had_pr=$(gh pr list -R "$repo" --state open --limit 100 \
-                            --json headRefName \
-                            --jq '[.[] | select(.headRefName | startswith("release-please--"))] | length'); then
+                            --json headRefName,isCrossRepository \
+                            --jq '[.[] | select(.isCrossRepository | not) | select(.headRefName | startswith("release-please--"))] | length'); then
               echo "::endgroup::"
               echo "::error::could not list ${repo}'s open pull requests"
               failed+=("$repo"); continue
@@ -274,8 +277,8 @@ jobs:
             # digests already right, nothing is pushed. release-please rewrites the branch only
             # when the release notes change, and this step runs again right after it does.
             if ! branch=$(gh pr list -R "$repo" --state open --limit 100 \
-                            --json headRefName \
-                            --jq '[.[] | select(.headRefName | startswith("release-please--")) | .headRefName] | first // empty'); then
+                            --json headRefName,isCrossRepository \
+                            --jq '[.[] | select(.isCrossRepository | not) | select(.headRefName | startswith("release-please--")) | .headRefName] | first // empty'); then
               echo "::endgroup::"
               echo "::error::could not list ${repo}'s open pull requests after release-please"
               failed+=("$repo"); continue
