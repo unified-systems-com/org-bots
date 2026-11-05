@@ -1,13 +1,12 @@
 # org-bots
 
 This repository runs the unified-systems-com organisation's two bots from one small place.
-Renovate runs in fork mode and holds **no credential that can write to an org repository**.
-release-please runs as the `tap-release-please` GitHub App, whose key is the one credential here
-that can:
+Both run as GitHub Apps (`tap-renovate` and `tap-release-please`), and each App's private key is a
+credential here that can write to org repositories, scoped per run as described below:
 
 | Bot | Runs as | Where | Does |
 | --- | --- | --- | --- |
-| Renovate | the fork bot (a machine user) | `.github/workflows/renovate.yml` | Opens dependency-update PRs from the bot's forks |
+| Renovate | the `tap-renovate` GitHub App (a short-lived token per run) | `.github/workflows/renovate.yml` | Opens dependency-update PRs from `renovate/*` branches in the repository itself |
 | release-please | the `tap-release-please` GitHub App (a short-lived token per run) | `.github/workflows/release-please.yml` | Opens and refreshes each repository's release PR in the repository itself, and tags and publishes the release once a human has merged that PR |
 | release-please, for tap | the maintainer, with their own `gh` login | `scripts/run-as-maintainer.sh`, `scripts/cut-release.sh` | The same two steps for tap, by hand, until tap's PR checks name the App's bot (see "tap") |
 
@@ -22,15 +21,15 @@ on `pull_request`, so a fork's PR can trigger only GitHub's read-only CodeQL sca
 
 | Path | What it is |
 | --- | --- |
-| `.github/workflows/renovate.yml` | Renovate in fork mode. Daily at 07:15 UTC, or by dispatch: one repository (`only`), or `fleet` (the default: the rotation's next slice of the discovered repositories, not tap), or `all` |
-| `renovate/global.js` | Renovate's global config: tap (named) plus the discovered repositories, the bot identity (from environment variables), PR limits, fork mode, no onboarding, no dashboard |
+| `.github/workflows/renovate.yml` | Renovate as the `tap-renovate` App. By dispatch (the daily cron is commented out until the pilot is clean): one repository (`only`), or `fleet` (the default: the rotation's next slice of the discovered repositories, never tap) |
+| `renovate/global.js` | Renovate's global config: tap (named) plus the discovered repositories, the bot identity (from environment variables), PR limits, no onboarding, no dashboard |
 | `renovate/preset.js` | The shared repository config every discovered repository gets, including tap's boot-record pin manager |
 | `renovate/boot-records/` | The digest refresh Renovate runs after bumping an in-package boot record: `refresh.py`, tap's `tap.boot_records` vendored at a pinned commit (`tap/`, `tap-vendor.json`), `vendor.py` to check or move the pin, and its offline tests |
 | `.github/workflows/release-please.yml` | release-please as the App, over the discovered repositories (not tap): `github-release`, then `release-pr`, then the boot-record digest refresh. Pilot: manual dispatch only, one rotation slice per run (`batch`, default `auto`) or one repository (`only`) |
 | `scripts/next_batch.py` | Which slice of the fleet a Renovate run covers: the one after the last successful auto run, read from the run history (see [The ramp](#the-ramp)) |
 | `scripts/discover_fleet.py` | Which repositories both bots and `approve_bot_runs.py` act on: see [The fleet](#the-fleet) |
 | `scripts/cut-release.sh` | `github-release` run by the maintainer, for tap (the fleet's tags come from the App). Dry run by default |
-| `scripts/approve_bot_runs.py` | Approves the fork bot's PR workflow runs that wait for "Approve and run", by fixed rules. Dry run by default |
+| `scripts/approve_bot_runs.py` | Approves the old fork bot's PR workflow runs that wait for "Approve and run", by fixed rules. Dry run by default. Not used by the App lane; delete it once nothing needs it |
 | `tests/` | Offline tests for `approve_bot_runs.py`, `discover_fleet.py` and `renovate/global.js` (fixture JSON, no network; the `global.js` tests need `node` and are skipped without it): `python3 -m unittest discover -s tests` |
 | `renovate/boot-records/test_refresh.py` | Offline tests for the digest refresh and the vendored pin: `python3 -m unittest discover -s renovate/boot-records` (Python 3.11 or later, for `tomllib`) |
 | `release-please/package.json`, `package-lock.json` | Pin the release-please CLI and its whole dependency closure, for CI and for the script |
@@ -59,29 +58,31 @@ scripts/discover_fleet.py        # prints {"core": ["tap"], "fleet": [...]}; the
 
 Renovate's own `autodiscover`/`autodiscoverTopics` cannot do this here: on GitHub, Renovate
 autodiscovers from `GET /user/repos`, which lists the repositories the token's user owns or holds
-a role on. The fork bot holds no role on any org repository, so that list is its own forks, which
-carry no topics. The search API is not used either: its index lagged the topic by minutes when it
+a role on. That is not the fleet: the token is scoped per run to the slice's repositories, and
+which repositories a run covers is decided by the topic discovery below. The search API is not used either: its index lagged the topic by minutes when it
 was first applied.
 
-## How fork mode works
+## How Renovate runs
 
-Renovate runs in fork mode. (release-please used to: it moved to the App on 2026-11-05, see "How
-release-please runs" below.) The fork bot is a GitHub **user** account that is not an org member
-and has no role on any org repository. For each repository it works on, it forks the repository
-into its own account, pushes its branch there, and opens the PR from the fork, exactly as an
-outside contributor would. The target repository then treats that PR like any fork PR: its own
-checks run, a human reviews, a human merges.
+The `renovate` job runs as the org-owned `tap-renovate` GitHub App, installed on selected
+repositories (the plugin repositories; not tap, which runs its own Renovate). Each run:
 
-Renovate does this natively: the workflow passes the bot's token as both the platform token and
-`RENOVATE_FORK_TOKEN`. It names its fork `unified-systems-com-_-<repo>`.
+1. mints an installation token for ONLY the repositories in that run's slice, with `contents:
+   write`, `pull-requests: write` and `workflows: write`. The `workflows` permission is what lets
+   Renovate bump the pinned `uses:` SHAs in `.github/workflows`; release-please does not have it.
+   The token lasts an hour and is revoked when the job ends;
+2. runs the pinned Renovate image over that slice. Renovate pushes its `renovate/*` branches to the
+   target repository itself and opens the PR from there, authored by `tap-renovate[bot]` (account
+   type `Bot`). The repository's own checks run on it without an "Approve and run" step, a human
+   reviews, a human merges;
+3. after a boot-record bump, runs the digest refresh as Renovate's one allowed post-upgrade command.
 
-### What a maintainer has to do by hand
+The workflow cuts the same slice `renovate/global.js` does (`ORG_BOTS_BATCH`), because the token
+must be scoped before Renovate starts. tap, `all` and unknown names are refused for `only`.
 
-- **"Approve and run" on fork PRs.** GitHub does not run a fork PR's workflows from a first-time
-  contributor until someone with write access clicks *Approve and run workflows*. Depending on the
-  repository's Actions setting, that can apply to every PR from an outside account, not only the
-  first. Until checks run, the PR is not mergeable. Use `scripts/approve_bot_runs.py`, not the
-  button (see "Approving the bot's runs").
+Until 2026-11-05 Renovate ran in fork mode as a machine user outside the org. That account was
+suspended, and the fork-mode controls (the fork bot's token, its variables, "Approve and run" on
+fork PRs, `scripts/approve_bot_runs.py`) are no longer used by this workflow.
 
 ## How release-please runs
 
@@ -106,23 +107,23 @@ slice that includes an uninstalled repository fails the whole slice, loudly.
 ## Threat model
 
 **What an attacker wants here:** a credential that can push to, or tag in, org repositories.
-There is one here: the release-please App's private key. Renovate holds none.
+There are two here: the private keys of the release-please and Renovate Apps.
 
 **Who holds write:**
 
 | Credential | Held by | Can write to |
 | --- | --- | --- |
 | `TAP_RELEASE_PLEASE_PRIVATE_KEY` | the `bots` environment of this repository | mints installation tokens for the `tap-release-please` App, on the repositories it is installed on only: `contents: write` (branches, tags, releases) and `pull-requests: write`; no `workflows` permission, no administration |
-| `FORK_BOT_TOKEN` | the `bots` environment of this repository | the fork bot's own forks only (Renovate). On org repositories it can do what any GitHub user can: fork, and open PRs and issues |
+| `TAP_RENOVATE_PRIVATE_KEY` | the `bots` environment of this repository | mints installation tokens for the `tap-renovate` App, on the repositories it is installed on only: `contents: write`, `pull-requests: write` and `workflows: write`; no administration |
 | The maintainer's `gh` login | the maintainer's machine | whatever the maintainer can; used by `cut-release.sh` and `run-as-maintainer.sh` for tap |
-| `TAP_RENOVATE_PRIVATE_KEY` | deleted from the `bots` environment on 2026-09-28; its App is not installed on the org (checked 2026-11-05) | nothing |
+| `FORK_BOT_TOKEN` | retired: delete it from the `bots` environment once the App pilot has run clean | the suspended fork bot's own forks |
 
 **Where the key is.** `TAP_RELEASE_PLEASE_PRIVATE_KEY` is a secret of the `bots` **environment**,
 never a repository-level secret, and the client ID is the environment variable
 `TAP_RELEASE_PLEASE_CLIENT_ID`. The environment's deployment branch policy allows `main` only, so
 the key reaches only a workflow already merged to `main`, and getting a workflow onto `main`
-takes a PR the code owner reviewed. `FORK_BOT_TOKEN` is held the same way, with the bot's login
-and numeric id as the variables `FORK_BOT_LOGIN` and `FORK_BOT_ID`.
+takes a PR the code owner reviewed. `TAP_RENOVATE_PRIVATE_KEY` is held the same way, with the
+client ID as the variable `TAP_RENOVATE_CLIENT_ID`.
 
 **What can run with the key.** For release-please, the CLI, installed with `npm ci
 --ignore-scripts` from a lockfile that pins every package by integrity hash, plus the runner's
@@ -132,9 +133,10 @@ action is pinned by full commit SHA, and every workflow starts from `permissions
 read-only `GITHUB_TOKEN` (`contents: read`, to check this repository out).
 
 **What a stolen App key gets.** The ability to mint tokens for any repository the App is
-installed on, until the key is deleted in the App's settings: push branches, open PRs, and create
-tags and releases there. It does not get `main`, a merge, or a workflow-file edit, if the rulesets
-below hold. Revoke: App settings, Credentials, Key pairs: delete the key, generate a new one, and
+installed on, until the key is deleted in the App's settings. The release-please key: push
+branches, open PRs, and create tags and releases there. The Renovate key: push branches and open
+PRs, and, because it holds `workflows: write`, put a change to a workflow file on a branch (not
+on `main`). Neither gets `main` or a merge, if the rulesets below hold. Revoke: App settings, Credentials, Key pairs: delete the key, generate a new one, and
 replace the secret.
 
 **What the rulesets must keep true** (the App relies on them; recheck after changing a ruleset):
@@ -142,10 +144,6 @@ the App is not a bypass actor on any branch ruleset, so it cannot push `main`; n
 blocks creating `release-please--*` branches; and the org `tag-protection` ruleset blocks
 deleting and updating a tag. Reading the org rulesets needs `admin:org`, so they are checked in
 the org's settings, not from here.
-
-**What a stolen fork-bot token gets.** PRs, issues and comments on public org repositories as the
-bot, and writes to the bot's own forks. Every such PR still needs "approve and run" to get checks, a
-review, and a human merge. Revoke the token on the bot account and replace the secret.
 
 **What the bots cannot do.** Neither bot merges anything. Renovate runs with automerge off and
 creates no tag. A release happens only when a maintainer merges the release PR in the target
@@ -158,8 +156,6 @@ The tag is the one write a human does not make by hand for a fleet repository.
   enforced by the org `org-require-pr` ruleset).
 - **The App key, the bot token, variables and the `bots` environment:** repository admins only, which in
   practice means the org owner. Keep the admin list to the minimum.
-- **The fork bot account:** whoever holds its login. It must stay outside the org with no role on
-  any org repository; giving it one gives this repository's token that write.
 
 ## Cutting a release
 
@@ -357,6 +353,8 @@ repository changes. Removing the topic, or archiving the repository, takes it ou
 - **Renovate:** it gets `renovate/preset.js`. A repository with a renovate config of its own
   would get both, so name it in `SELF_CONFIGURED` in `renovate/global.js` the way `tap` is named;
   a named entry wins over discovery. (No discovered repository has its own config today.)
+  **Also add the repository to the `tap-renovate` App's installation**, the same way as below for
+  `tap-release-please`; until then the slice that includes it fails at the token mint.
 - **release-please:** a discovered repository without `release-please-config.json` and
   `.release-please-manifest.json` at its root is skipped with a notice; add them, the way
   github-core-tap has them, plus the self-entry `extra-files` entry in "Release PRs"
@@ -371,13 +369,14 @@ repository changes. Removing the topic, or archiving the repository, takes it ou
 
 ## The ramp
 
-On 2026-09-28 the fork bot's first fleet-wide runs opened about 50 PRs and renamed 22 forks in
+On 2026-09-28 the old fork bot's first fleet-wide runs opened about 50 PRs and renamed 22 forks in
 twenty minutes, and GitHub's anti-abuse flagged the two-day-old account: it and everything it
 created went invisible to everyone else. So both jobs pace themselves:
 
 - **Renovate** covers one slice of the fleet per run (`batch`, default `auto`: about three
-  repositories, 8 slices). It runs daily (07:15 UTC) and keeps going until you stop it, so a
-  backlog, or a long absence, is worked off by leaving the schedule alone.
+  repositories, 8 slices). It runs by dispatch while the App is piloted; once the cron is switched on it
+  runs daily (07:15 UTC) and keeps going, so a backlog, or a long absence, is worked off by leaving
+  the schedule alone.
   `batch=all` removes the slicing; don't, on a young account.
   - **The rotation survives absence.** `scripts/next_batch.py` takes the slice after the one the
     newest *successful* auto run covered, read from that run's job name (`renovate (auto 3/8)`).
@@ -412,9 +411,8 @@ run means only that the API calls succeeded.
 ## Running a job by hand
 
 ```sh
-gh workflow run renovate.yml -R unified-systems-com/org-bots            # the default, fleet: every discovered repo, not tap; add -f logLevel=debug to troubleshoot
-gh workflow run renovate.yml -R unified-systems-com/org-bots -f only=gryphon-playground-tap   # another single fleet repo (must be discovered, or tap)
-gh workflow run renovate.yml -R unified-systems-com/org-bots -f only=all  # tap and every discovered repository (an empty value falls back to the default)
+gh workflow run renovate.yml -R unified-systems-com/org-bots            # the default, fleet: the rotation's next slice of discovered repos, not tap; add -f logLevel=debug to troubleshoot
+gh workflow run renovate.yml -R unified-systems-com/org-bots -f only=gryphon-playground-tap   # another single fleet repo (must be discovered; tap and "all" are refused)
 gh workflow run release-please.yml -R unified-systems-com/org-bots                       # the rotation's next slice
 gh workflow run release-please.yml -R unified-systems-com/org-bots -f only=github-core-tap  # one discovered repository (not tap)
 gh workflow run fleet-conformance.yml -R unified-systems-com/org-bots   # the conformance sweep, off-schedule
@@ -423,10 +421,14 @@ gh run list -R unified-systems-com/org-bots --limit 5
 
 ## Before the first run
 
-- **Renovate:** create the fork bot account (outside the org), and a token on it. In this
-  repository's `bots` environment: the secret `FORK_BOT_TOKEN`, and the variables
-  `FORK_BOT_LOGIN` and `FORK_BOT_ID` (`gh api users/<login> --jq .id`). A run with either
-  variable missing stops before touching any repository.
+- **Renovate:** create the `tap-renovate` GitHub App in the org (webhook off; repository
+  permissions Contents, Pull requests and Workflows: Read and write, Metadata: Read-only, nothing
+  else), install it on the selected repositories (the same ones as `tap-release-please`, not tap),
+  generate a key pair (Credentials, Key pairs), and put it in the `bots` environment as the secret
+  `TAP_RENOVATE_PRIVATE_KEY`, with the App's client ID as the variable `TAP_RENOVATE_CLIENT_ID`.
+  The bot's numeric id, `gh api 'users/tap-renovate[bot]' --jq .id`, is `RENOVATE_BOT_ID` in the
+  workflow. Delete the downloaded `.pem`. A run with the secret or variable missing fails at the
+  token mint, before touching any repository.
 - **release-please:** create the `tap-release-please` GitHub App in the org (webhook off;
   repository permissions Contents and Pull requests: Read and write, Metadata: Read-only, nothing
   else), install it on the selected repositories, generate a key pair (Credentials, Key pairs), and

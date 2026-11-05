@@ -1,16 +1,15 @@
 // Renovate GLOBAL (self-hosted) configuration for the unified-systems-com fleet.
 //
-// This file is read by .github/workflows/renovate.yml. It says WHICH repositories the fork
-// bot works on (tap, named below, plus the repositories topic discovery found) and the
-// bot-wide rules. It does not say how each repository's dependencies
+// This file is read by .github/workflows/renovate.yml. It says WHICH repositories the App
+// works on (the repositories topic discovery found; tap is named below but the workflow never
+// selects it) and the bot-wide rules. It does not say how each repository's dependencies
 // are grouped or labelled: that is repository config, which comes from
 //   - the repository's own renovate.json5, when it has one (today only tap does), or
 //   - renovate/preset.js in this repo, which every discovered repository gets below.
 //
-// Fork mode: Renovate runs as a machine user that has no role on any org repository. It
-// forks each repository into its own account, pushes update branches there, and opens PRs
-// from the fork, as an outside contributor would. The workflow passes the bot's token as
-// both the platform token and RENOVATE_FORK_TOKEN.
+// Renovate runs as the `tap-renovate` GitHub App. The workflow mints an installation token for
+// the run's slice of the fleet only and passes it as the platform token; Renovate pushes its
+// branches to the target repository and opens the PR from there, authored by the App's bot.
 //
 // CommonJS rather than JSON5 so the bot identity comes from the environment (below) and the
 // shared repository config can be loaded from disk (renovate/preset.js explains why).
@@ -26,8 +25,8 @@ const FLEET_PRESET = require("./preset.js");
 //
 // Open policy decision: tap's sign-off (DCO) and issue-link checks exempt only the approved
 // identities in tap's tap/tap.pr-bots.json, and those require GitHub account type `Bot`
-// (a GitHub App). The fork bot is a user account, so its PRs to tap fail both checks until
-// that rule changes. Renovate must NOT add a Signed-off-by trailer to get past it: an
+// (a GitHub App). The tap-renovate App's bot is one, but it must be added to that file (a core
+// change) before tap joins this job. Renovate must NOT add a Signed-off-by trailer to get past it: an
 // automated system never certifies the DCO. tap stays listed because it gets the same
 // coverage as every other repository; see README, "Open decision: tap's PR checks".
 const SELF_CONFIGURED = [
@@ -50,8 +49,8 @@ const SELF_CONFIGURED = [
 // and leaves by losing it or being archived.
 //
 // Renovate's own autodiscover cannot do this: on GitHub it lists `GET /user/repos`, the
-// repositories the token's user owns or has a role on. The fork bot has no role anywhere, so
-// that is only its own forks, which carry no topics. See scripts/discover_fleet.py.
+// repositories the token's user owns or has a role on. The App's token is scoped per run, and
+// the list of repositories it can see is not a fleet definition. See scripts/discover_fleet.py.
 const NAME = /^[A-Za-z0-9._-]+$/;
 // The repository that runs this automation is never a target, whatever its topics say.
 const REFUSED = new Set(["org-bots"]);
@@ -95,8 +94,8 @@ const ALL = [
 ];
 
 // Pilot: ORG_BOTS_ONLY=<repository name> narrows a run to ONE repository from the list
-// above: tap, or a discovered repository. The token is a user token, so it is not scoped per
-// repository: discovery, and autodiscover off, are what decide which repositories get PRs.
+// above: tap, or a discovered repository. The workflow scopes the token to the run's
+// repositories; discovery, and autodiscover off, are what decide which repositories get PRs.
 // A name that is not in the list is an error, never a way to reach a repository discovery
 // did not find (owner unified-systems-com AND the `tap-plugin` topic).
 // "all" (or nothing) means every listed repository. "fleet" means every discovered
@@ -116,7 +115,7 @@ if (ONLY && repositories.length !== 1) {
   throw new Error(`ORG_BOTS_ONLY=${ONLY} is not tap or a discovered repository`);
 }
 
-// The ramp. On 2026-09-28 the fork bot's first fleet-wide run opened about 50 PRs in 20
+// The ramp. On 2026-09-28 the old fork bot's first fleet-wide run opened about 50 PRs in 20
 // minutes, and GitHub's anti-abuse flagged the two-day-old account. So a fleet or all run
 // covers ONE slice of the list: ORG_BOTS_BATCH=<i>/<n> keeps every n-th repository starting
 // at the i-th (1-based), so n runs cover the whole list once. The workflow sets it (scripts/next_batch.py:
@@ -132,17 +131,16 @@ if (!ONLY && BATCH !== "all") {
   batched = repositories.filter((_, k) => k % n === i - 1);
 }
 
-// The fork bot's identity, from the `bots` environment's VARIABLES (not secrets: neither
-// is sensitive). Set both when the account exists:
-//   FORK_BOT_LOGIN  the account's login
-//   FORK_BOT_ID     its numeric id: `gh api users/<login> --jq .id`
-// Commits are then authored by the bot's own noreply address, never by Renovate's
-// Mend-owned default. A missing or malformed value stops the run before any repository is
-// touched, rather than committing under the wrong name.
-const LOGIN = (process.env.FORK_BOT_LOGIN || "").trim();
-const ID = (process.env.FORK_BOT_ID || "").trim();
-if (!/^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$/.test(LOGIN) || !/^[1-9][0-9]*$/.test(ID)) {
-  throw new Error("FORK_BOT_LOGIN and FORK_BOT_ID must be set to the fork bot's login and numeric id");
+// The App's bot identity, from the workflow's environment (public values). Both are required:
+//   RENOVATE_BOT_LOGIN  the bot user's login, `tap-renovate[bot]`
+//   RENOVATE_BOT_ID     its numeric id: `gh api 'users/tap-renovate[bot]' --jq .id`
+// Commits are then authored by the bot's own noreply address, never by Renovate's Mend-owned
+// default. A missing or malformed value stops the run before any repository is touched, rather
+// than committing under the wrong name.
+const LOGIN = (process.env.RENOVATE_BOT_LOGIN || "").trim();
+const ID = (process.env.RENOVATE_BOT_ID || "").trim();
+if (!/^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})(?:\[bot\])?$/.test(LOGIN) || !/^[1-9][0-9]*$/.test(ID)) {
+  throw new Error("RENOVATE_BOT_LOGIN and RENOVATE_BOT_ID must be set to the App bot's login and numeric id");
 }
 
 module.exports = {
@@ -154,10 +152,6 @@ module.exports = {
 
   username: LOGIN,
   gitAuthor: `${LOGIN} <${ID}+${LOGIN}@users.noreply.github.com>`,
-
-  // Fork mode (the token itself arrives as RENOVATE_FORK_TOKEN). The fork is created on
-  // first use and reused after that.
-  forkCreation: true,
 
   // No onboarding PRs, and a repository with no renovate config is still processed
   // (with the preset above).

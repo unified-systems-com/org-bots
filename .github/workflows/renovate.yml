@@ -1,39 +1,40 @@
-# Fleet Renovate: dependency-update PRs across tap and every unified-systems-com repository
-# carrying the `tap-plugin` topic, in FORK MODE, as the fork bot: a machine user with no role
-# on any org repository.
+# Fleet Renovate: dependency-update PRs across every unified-systems-com repository carrying the
+# `tap-plugin` topic, as the `tap-renovate` GitHub App (tap runs its own Renovate and is not
+# touched here).
 #
 # Which repositories: the `discover` job runs scripts/discover_fleet.py, which lists the org's
 # repositories and keeps those carrying the topic (owner-checked, archived ones dropped,
 # org-bots refused). It needs no secret: the org's repository list is public, and the job holds
 # only its read-only GITHUB_TOKEN. Its answer reaches renovate/global.js as ORG_BOTS_FLEET; tap
-# is named in global.js itself. The `renovate` job, which holds the bot's token, starts only
+# is named in global.js, but this workflow never selects it. The `renovate` job, which holds the bot's token, starts only
 # after discovery has succeeded.
 #
-# Renovate forks each repository into the bot's account, pushes its update branches
-# to that fork, and opens the PR from the fork, exactly as an outside contributor would.
-# Nothing here can write to an org repository: the bot's writes reach only its own forks.
-# Every update is a PR that runs the target's own checks and is merged by a human.
+# Each run mints an installation token for the run's slice of the fleet ONLY, with contents:
+# write, pull_requests: write and workflows: write (workflows so Renovate can bump the pinned
+# `uses:` SHAs in .github/workflows). Renovate pushes its `renovate/*` branches to the target
+# repository itself and opens the PR from there; the PR is authored by `tap-renovate[bot]`, account
+# type `Bot`, and runs the target's own checks like any in-repository PR. Every update is a PR and
+# is merged by a human.
 #
-# Credential: the bot's token, held ONLY as the `FORK_BOT_TOKEN` secret of this repository's
-# `bots` environment (deploys from `main` only). It is passed as both the platform token and
-# RENOVATE_FORK_TOKEN, which is what fork mode expects. The bot's login and numeric id are
-# the environment VARIABLES `FORK_BOT_LOGIN` and `FORK_BOT_ID` (see renovate/global.js).
+# Credential: the App's private key, held ONLY as the `TAP_RENOVATE_PRIVATE_KEY` secret of this
+# repository's `bots` environment (deploys from `main` only), with its Client ID as the
+# variable `TAP_RENOVATE_CLIENT_ID`. The token lives for the run (an hour at most).
 #
-# Rotation: mint a new token on the bot account, replace the environment secret, revoke the
-# old token there. The next run picks it up.
+# Rotation: generate a new key on the App, replace the environment secret, delete the old key
+# on the App. The next run picks it up.
 name: renovate
 
 on:
   # The daily run works through the fleet one slice at a time (scripts/next_batch.py), so a
   # backlog, or a long absence, is worked off by simply letting the schedule keep running.
-  # Every run of the `bots` environment still needs criticalsec's approval (see README, "The
-  # ramp"); a run nobody approves moves nothing and the next one takes the same slice.
-  schedule:
-    - cron: "15 7 * * *"   # daily 07:15 UTC, then a random 0-10 minute start
+  # Cron stays commented out until the pilot has run clean (see README, "The ramp"); until
+  # then every run is a dispatch.
+  # schedule:
+  #   - cron: "15 7 * * *"   # daily 07:15 UTC, then a random 0-10 minute start
   workflow_dispatch:
     inputs:
       only:
-        description: "Run on this ONE repository (name, no owner): tap or a discovered one. \"fleet\" for every discovered repository (not tap); \"all\" for those plus tap."
+        description: "Run on this ONE repository (name, no owner): a discovered one. \"fleet\" for the slice of the discovered repositories. tap is refused: it runs its own Renovate."
         required: false
         default: "fleet"
         type: string
@@ -106,10 +107,64 @@ jobs:
         # keeps the bot's activity from landing on a fixed rhythm.
         run: sleep $(( RANDOM % 601 ))
 
+      - name: Choose this run's repositories
+        id: slice
+        env:
+          FLEET_JSON: ${{ needs.discover.outputs.fleet }}
+          BATCH: ${{ needs.discover.outputs.batch }}
+          ONLY: ${{ inputs.only || 'fleet' }}
+        run: |
+          set -euo pipefail
+          # The same cut renovate/global.js makes (every n-th name of the sorted list from the
+          # i-th), repeated here because the token must be scoped before Renovate starts.
+          if [[ "$BATCH" == "all" ]]; then
+            slice_i=1; slice_n=1
+          elif [[ "$BATCH" =~ ^([1-9][0-9]*)/([1-9][0-9]*)$ ]] \
+               && (( BASH_REMATCH[1] <= BASH_REMATCH[2] )); then
+            slice_i=${BASH_REMATCH[1]}; slice_n=${BASH_REMATCH[2]}
+          else
+            echo "::error::the fleet slice is unset or malformed"
+            exit 1
+          fi
+          mapfile -t repos < <(jq -r --argjson i "$slice_i" --argjson n "$slice_n" \
+            '.fleet | sort | to_entries[] | select(.key % $n == $i - 1) | .value' <<< "$FLEET_JSON")
+          if [[ "$ONLY" != "fleet" ]]; then
+            if ! jq -e --arg n "$ONLY" '.fleet | index($n) != null' <<< "$FLEET_JSON" > /dev/null; then
+              echo "::error::'${ONLY}' is not a discovered repository (tap, \"all\" and unknown names are refused)"
+              exit 1
+            fi
+            repos=("$ONLY")
+          fi
+          if (( ${#repos[@]} == 0 )); then
+            echo "::error::discovery produced no repositories for slice ${BATCH}"
+            exit 1
+          fi
+          for name in "${repos[@]}"; do
+            # An empty or malformed list must never reach the token mint, which would scope the
+            # token to every repository in the installation.
+            if [[ ! "$name" =~ ^[A-Za-z0-9._-]+$ || "$name" == "." || "$name" == ".." || "$name" == "org-bots" || "$name" == "tap" ]]; then
+              echo "::error::discovery produced an unusable repository name"
+              exit 1
+            fi
+          done
+          echo "repos=$(IFS=,; echo "${repos[*]}")" >> "$GITHUB_OUTPUT"
+
+      - name: Mint the tap-renovate token for these repositories only
+        id: app
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          client-id: ${{ vars.TAP_RENOVATE_CLIENT_ID }}
+          private-key: ${{ secrets.TAP_RENOVATE_PRIVATE_KEY }}
+          owner: unified-systems-com
+          repositories: ${{ steps.slice.outputs.repos }}
+          permission-contents: write
+          permission-pull-requests: write
+          permission-workflows: write
+
       - name: Run Renovate
         uses: renovatebot/github-action@9fea9f0fbf80401026d11d03911d62b1f70fef1f # v46.3.3
         with:
-          token: ${{ secrets.FORK_BOT_TOKEN }}
+          token: ${{ steps.app.outputs.token }}
           configurationFile: renovate/global.js
           # The action mounts the configuration file alone, at /github-action/global.js.
           # global.js requires ./preset.js, so mount that beside it, read-only. The boot-record
@@ -124,11 +179,12 @@ jobs:
           # pilot's one-repository narrowing) and the bot identity, so pass those into the
           # container too. The rest is the action's default
           # allow-list.
-          env-regex: "^(?:RENOVATE_\\w+|LOG_LEVEL|GITHUB_COM_TOKEN|NODE_OPTIONS|NO_COLOR|ORG_BOTS_FLEET|ORG_BOTS_ONLY|ORG_BOTS_BATCH|FORK_BOT_LOGIN|FORK_BOT_ID)$"
+          env-regex: "^(?:RENOVATE_\\w+|LOG_LEVEL|GITHUB_COM_TOKEN|NODE_OPTIONS|NO_COLOR|ORG_BOTS_FLEET|ORG_BOTS_ONLY|ORG_BOTS_BATCH|RENOVATE_BOT_LOGIN|RENOVATE_BOT_ID)$"
         env:
-          RENOVATE_FORK_TOKEN: ${{ secrets.FORK_BOT_TOKEN }}
-          FORK_BOT_LOGIN: ${{ vars.FORK_BOT_LOGIN }}
-          FORK_BOT_ID: ${{ vars.FORK_BOT_ID }}
+          # The App's bot user, for commit authorship (public). If the App is ever recreated
+          # this changes: gh api 'users/tap-renovate[bot]' --jq .id
+          RENOVATE_BOT_LOGIN: "tap-renovate[bot]"
+          RENOVATE_BOT_ID: "353051615"
           LOG_LEVEL: ${{ inputs.logLevel || 'info' }}
           ORG_BOTS_FLEET: ${{ needs.discover.outputs.fleet }}
           ORG_BOTS_ONLY: ${{ inputs.only || 'fleet' }}
