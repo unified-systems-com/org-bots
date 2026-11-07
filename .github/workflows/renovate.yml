@@ -1,12 +1,12 @@
 # Fleet Renovate: dependency-update PRs across every unified-systems-com repository carrying the
-# `tap-plugin` topic, as the `tap-renovate` GitHub App (tap runs its own Renovate and is not
-# touched here).
+# `tap-plugin` topic, and tap itself, as the `tap-renovate` GitHub App.
 #
 # Which repositories: the `discover` job runs scripts/discover_fleet.py, which lists the org's
 # repositories and keeps those carrying the topic (owner-checked, archived ones dropped,
 # org-bots refused). It needs no secret: the org's repository list is public, and the job holds
 # only its read-only GITHUB_TOKEN. Its answer reaches renovate/global.js as ORG_BOTS_FLEET; tap
-# is named in global.js, but this workflow never selects it. The `renovate` job, which holds the bot's token, starts only
+# is named, not discovered (the `core` list), and is selected with the fleet like any other
+# repository. The `renovate` job, which holds the bot's token, starts only
 # after discovery has succeeded.
 #
 # Each run mints an installation token for the run's slice of the fleet ONLY, with contents:
@@ -34,7 +34,7 @@ on:
   workflow_dispatch:
     inputs:
       only:
-        description: "Run on this ONE repository (name, no owner): a discovered one. \"fleet\" for the slice of the discovered repositories. tap is refused: it runs its own Renovate."
+        description: "Run on this ONE repository (name, no owner): tap or a discovered one. \"fleet\" for the slice of tap plus the discovered repositories."
         required: false
         default: "fleet"
         type: string
@@ -127,10 +127,10 @@ jobs:
             exit 1
           fi
           mapfile -t repos < <(jq -r --argjson i "$slice_i" --argjson n "$slice_n" \
-            '.fleet | sort | to_entries[] | select(.key % $n == $i - 1) | .value' <<< "$FLEET_JSON")
+            '(.fleet + (.core // [])) | unique | to_entries[] | select(.key % $n == $i - 1) | .value' <<< "$FLEET_JSON")
           if [[ "$ONLY" != "fleet" ]]; then
-            if ! jq -e --arg n "$ONLY" '.fleet | index($n) != null' <<< "$FLEET_JSON" > /dev/null; then
-              echo "::error::'${ONLY}' is not a discovered repository (tap, \"all\" and unknown names are refused)"
+            if ! jq -e --arg n "$ONLY" '(.fleet + (.core // [])) | index($n) != null' <<< "$FLEET_JSON" > /dev/null; then
+              echo "::error::'${ONLY}' is not tap or a discovered repository (\"all\" and unknown names are refused)"
               exit 1
             fi
             repos=("$ONLY")
@@ -142,7 +142,7 @@ jobs:
           for name in "${repos[@]}"; do
             # An empty or malformed list must never reach the token mint, which would scope the
             # token to every repository in the installation.
-            if [[ ! "$name" =~ ^[A-Za-z0-9._-]+$ || "$name" == "." || "$name" == ".." || "$name" == "org-bots" || "$name" == "tap" ]]; then
+            if [[ ! "$name" =~ ^[A-Za-z0-9._-]+$ || "$name" == "." || "$name" == ".." || "$name" == "org-bots" ]]; then
               echo "::error::discovery produced an unusable repository name"
               exit 1
             fi

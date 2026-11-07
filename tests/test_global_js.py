@@ -59,8 +59,8 @@ class GlobalJsTest(unittest.TestCase):
     def test_all_is_tap_plus_discovered(self) -> None:
         out = self.load(FLEET)
         self.assertEqual(out["ok"], [
-            ["unified-systems-com/tap", 10, False],
             ["unified-systems-com/dcom-tap", None, True],
+            ["unified-systems-com/tap", 10, False],
             ["unified-systems-com/tap-plugin-github-core", None, True],
         ])
 
@@ -110,7 +110,7 @@ class GlobalJsTest(unittest.TestCase):
 
     def test_named_entry_wins_over_discovery(self) -> None:
         out = self.load({"fleet": ["ok", "tap"]})
-        self.assertEqual(out["ok"], [["unified-systems-com/tap", 10, False], ["unified-systems-com/ok", None, True]])
+        self.assertEqual(out["ok"], [["unified-systems-com/ok", None, True], ["unified-systems-com/tap", 10, False]])
 
     # The ramp (2026-09-28: a whole-fleet burst got the bot account flagged).
     BIG = {"core": ["tap"], "fleet": [f"p{i}-tap" for i in range(1, 8)]}
@@ -121,14 +121,14 @@ class GlobalJsTest(unittest.TestCase):
             part = self.repos(self.BIG, "fleet", f"{i}/3")
             self.assertLessEqual(len(part), 3, part)
             seen += part
-        self.assertEqual(sorted(seen), sorted(f"unified-systems-com/p{i}-tap" for i in range(1, 8)))
+        self.assertEqual(sorted(seen), sorted(["unified-systems-com/tap"] + [f"unified-systems-com/p{i}-tap" for i in range(1, 8)]))
 
     def test_one_repo_run_ignores_the_batch(self) -> None:
         self.assertEqual(self.repos(self.BIG, "p5-tap", "1/8"), ["unified-systems-com/p5-tap"])
 
     def test_unset_or_all_batch_is_the_whole_list(self) -> None:
-        self.assertEqual(len(self.repos(self.BIG, "fleet")), 7)
-        self.assertEqual(len(self.repos(self.BIG, "fleet", "all")), 7)
+        self.assertEqual(len(self.repos(self.BIG, "fleet")), 8)
+        self.assertEqual(len(self.repos(self.BIG, "fleet", "all")), 8)
 
     def test_malformed_batch_refused(self) -> None:
         for batch in ("0/3", "4/3", "1", "a/b", "1/0", "-1/3"):

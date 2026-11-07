@@ -44,8 +44,8 @@ lists them. `scripts/discover_fleet.py` finds them each time:
 - every repository in `GET /orgs/unified-systems-com/repos` whose owner is `unified-systems-com`
   (checked per entry: a topic is a global string, so the owner is checked, not assumed from the
   URL), that carries the `tap-plugin` topic, and is neither archived nor disabled;
-- plus `tap`, which is named rather than discovered (it is the host, and has its own Renovate
-  config), whether or not it carries the topic.
+- plus `tap`, which is named rather than discovered (it is the host, and keeps its own
+  `renovate.json5`), whether or not it carries the topic.
 
 It refuses to answer (and the run stops) when no repository carries the topic, when a tagged
 repository's name is not a plain name, or when `org-bots` itself carries the topic. The org's
@@ -458,21 +458,21 @@ and tap's release PR title pattern (`[via maintainer-run]`) needs a decision. Th
 written for fork mode and are kept for the history of those decisions; where they say "the bot's
 fork", an App-authored release branch is in tap itself.
 
-### Open decision: tap's PR checks and a user-account bot
+### tap's PR checks
 
 tap's sign-off (DCO) and issue-link checks exempt only the identities approved in tap's
 `tap/tap.pr-bots.json`, and an entry there must have GitHub account type `Bot`, taken from the
-authenticated PR event. The fork bot is a user account (type `User`), so every PR it opens on tap
-fails both checks. Renovate and release-please must **not** add a `Signed-off-by` trailer to get
-past this: an automated system never certifies the DCO. How tap should treat a user-account bot
-is a policy decision for the maintainer, not something this repository works around.
+authenticated PR event. `tap-renovate[bot]` (id 315114127, type `Bot`) is approved there, so the
+App's PRs pass both checks. (The old fork bot was a user account, type `User`, which is why this
+was once an open decision.) Renovate and release-please must **not** add a `Signed-off-by`
+trailer: an automated system never certifies the DCO.
 
 ### tap's own lanes
 
-tap still runs its own `renovate.yml` and `release-please.yml` with the App keys. The
-release-please job here skips tap while tap's `release-please.yml` exists, so the two lanes cannot
-race for tap's release PR. Renovate here would run beside tap's own Renovate, so do not dispatch
-`only=tap` or `only=all` until tap's `renovate.yml` is retired.
+tap's own `renovate.yml` and `release-please.yml` were retired on 2026-09-29 (tap@b62b5f5e).
+Renovate here now covers tap like any other repository: it is in the fleet slices, and
+`only=tap` runs it alone. The tap-renovate App must be installed on tap. release-please for tap
+is separate and is not changed by this.
 
 ### tap's uv.lock refresh
 
