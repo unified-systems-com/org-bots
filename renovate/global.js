@@ -23,17 +23,15 @@ const FLEET_PRESET = require("./preset.js");
 // preset.js. It is listed WITHOUT the shared config: applying both would register that
 // manager twice.
 //
-// Open policy decision: tap's sign-off (DCO) and issue-link checks exempt only the approved
-// identities in tap's tap/tap.pr-bots.json, and those require GitHub account type `Bot`
-// (a GitHub App). The tap-renovate App's bot is one, but it must be added to that file (a core
-// change) before tap joins this job. Renovate must NOT add a Signed-off-by trailer to get past it: an
-// automated system never certifies the DCO. tap stays listed because it gets the same
-// coverage as every other repository; see README, "Open decision: tap's PR checks".
+// tap's sign-off (DCO) and issue-link checks exempt only the approved identities in tap's
+// tap/tap.pr-bots.json, which require GitHub account type `Bot`. tap-renovate[bot] (id
+// 315114127, type Bot) is in that file, so its PRs pass both checks. Renovate must NOT add a
+// Signed-off-by trailer: an automated system never certifies the DCO.
 const SELF_CONFIGURED = [
   {
     repository: `${ORG}/tap`,
-    // tap's current job runs with Renovate's default concurrent limit (10). Keep it, so
-    // moving tap onto this job changes who runs Renovate and nothing else. Its hourly
+    // tap's former job ran with Renovate's default concurrent limit (10). Keep it, so
+    // moving tap back onto Renovate changes who runs it and nothing else. Its hourly
     // limit is already the default 2, and its lockfile-maintenance branch is exempt from
     // both limits by tap's own config.
     prConcurrentLimit: 10,
@@ -85,32 +83,29 @@ function discoveredFleet(raw) {
 
 const FLEET = discoveredFleet(process.env.ORG_BOTS_FLEET);
 
+// Sorted by name, because the workflow scopes the token with the same cut over the sorted list
+// of discovered names plus tap (every n-th from the i-th); the two must pick the same slice.
 const ALL = [
   ...SELF_CONFIGURED,
   ...FLEET.map((name) => ({
     repository: `${ORG}/${name}`,
     ...FLEET_PRESET,
   })),
-];
+].sort((a, b) => (a.repository < b.repository ? -1 : a.repository > b.repository ? 1 : 0));
 
 // Pilot: ORG_BOTS_ONLY=<repository name> narrows a run to ONE repository from the list
 // above: tap, or a discovered repository. The workflow scopes the token to the run's
 // repositories; discovery, and autodiscover off, are what decide which repositories get PRs.
 // A name that is not in the list is an error, never a way to reach a repository discovery
 // did not find (owner unified-systems-com AND the `tap-plugin` topic).
-// "all" (or nothing) means every listed repository. "fleet" means every discovered
-// repository but not tap: tap still runs its own Renovate (App mode, .github/workflows/
-// renovate.yml in tap) until that is retired, and two Renovates on one repository open
-// duplicate PRs. A workflow_dispatch string input that is left empty is replaced by its
-// default, so an empty value cannot be used to ask for "all".
+// "all" (or nothing) and "fleet" both mean every listed repository, tap included: tap takes
+// part in the ramp's slices like any other repository. tap's own Renovate workflow was retired
+// on 2026-09-29 (tap@b62b5f5e), so no second Renovate runs on it. A workflow_dispatch string
+// input that is left empty is replaced by its default, so an empty value cannot be used to ask
+// for "all".
 const RAW = (process.env.ORG_BOTS_ONLY || "").trim();
 const ONLY = RAW === "all" || RAW === "fleet" ? "" : RAW;
-const repositories =
-  RAW === "fleet"
-    ? ALL.filter((r) => r.repository !== `${ORG}/tap`)
-    : ONLY
-      ? ALL.filter((r) => r.repository === `${ORG}/${ONLY}`)
-      : ALL;
+const repositories = ONLY ? ALL.filter((r) => r.repository === `${ORG}/${ONLY}`) : ALL;
 if (ONLY && repositories.length !== 1) {
   throw new Error(`ORG_BOTS_ONLY=${ONLY} is not tap or a discovered repository`);
 }
