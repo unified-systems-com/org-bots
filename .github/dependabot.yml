@@ -1,0 +1,41 @@
+# Dependency updates for org-bots ITSELF. The two bots this repository runs (Renovate and
+# release-please, as org-owned GitHub Apps) refuse this repository by design: it holds their
+# keys in the `bots` environment, so neither may hold a write token to it or open PRs against
+# it (scripts/discover_fleet.py, renovate/global.js, the per-name guard in both workflows).
+# Dependabot runs on GitHub's side under its own identity with no credential of ours, so it is
+# the one updater that fits. Its PRs are ordinary PRs here: the org-bots-two-person ruleset
+# still needs a code owner's approval, no workflow runs on pull_request, and nothing here
+# merges on its own. A release-please bump is a change to the program that pushes to every
+# fleet repository: review a major as code, not as a dependency bump.
+version: 2
+updates:
+  # The pinned release-please CLI and its whole closure (package-lock.json, installed with
+  # `npm ci --ignore-scripts`). One grouped PR a week, so the closure moves as one reviewable
+  # change. This file alone gives only that weekly PR: a fix for an advisory arrives on its own
+  # PR the day it lands ONLY once the repository setting "Dependabot security updates"
+  # (Settings, Code security; `automated-security-fixes` in the API) is on, which a human sets
+  # outside this file. Off, the same fix rides the next weekly PR.
+  - package-ecosystem: npm
+    directory: /release-please
+    schedule:
+      interval: weekly
+      day: monday
+    groups:
+      release-please-closure:
+        patterns:
+          - "*"
+    commit-message:
+      prefix: "chore(deps)"
+  # The SHA-pinned actions in .github/workflows (`uses: owner/repo@<sha> # vX.Y.Z`). Dependabot
+  # moves the SHA and keeps the version comment current. One grouped PR a week.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    groups:
+      actions:
+        patterns:
+          - "*"
+    commit-message:
+      prefix: "chore(deps)"
