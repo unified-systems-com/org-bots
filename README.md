@@ -52,6 +52,13 @@ repository's name is not a plain name, or when `org-bots` itself carries the top
 repository list is public, so the workflows' `discover` job holds only its read-only
 `GITHUB_TOKEN`, and runs before, and apart from, the job that holds the bot's token.
 
+`org-bots` is refused because it holds the bots' keys: neither bot may hold a write token to the
+repository that configures it, nor open PRs against it. So this repository's own dependencies
+(the pinned release-please closure, the SHA-pinned actions) are kept by **Dependabot**
+(`.github/dependabot.yml`), the one updater that runs on GitHub's side with no credential of
+ours, and the rest of the org runs Renovate. Its PRs are ordinary PRs here: a code owner's
+approval, no workflow on `pull_request`, nothing merging on its own.
+
 ```sh
 scripts/discover_fleet.py        # prints {"core": ["tap"], "fleet": [...]}; the list goes to stderr
 ```
