@@ -4,5 +4,8 @@
   "description": "Pins the release-please CLI and its whole dependency closure (package-lock.json) for .github/workflows/release-please.yml.",
   "dependencies": {
     "release-please": "17.11.2"
+  },
+  "overrides": {
+    "minimatch": "11.0.1"
   }
 }
