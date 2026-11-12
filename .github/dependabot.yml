@@ -11,7 +11,10 @@ version: 2
 updates:
   # The pinned release-please CLI and its whole closure (package-lock.json, installed with
   # `npm ci --ignore-scripts`). One grouped PR a week, so the closure moves as one reviewable
-  # change; a security fix arrives on its own PR as soon as the advisory lands.
+  # change. This file alone gives only that weekly PR: a fix for an advisory arrives on its own
+  # PR the day it lands ONLY once the repository setting "Dependabot security updates"
+  # (Settings, Code security; `automated-security-fixes` in the API) is on, which a human sets
+  # outside this file. Off, the same fix rides the next weekly PR.
   - package-ecosystem: npm
     directory: /release-please
     schedule:
