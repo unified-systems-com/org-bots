@@ -65,7 +65,7 @@ was first applied.
 ## How Renovate runs
 
 The `renovate` job runs as the org-owned `tap-renovate` GitHub App, installed on selected
-repositories (the plugin repositories; not tap, which runs its own Renovate). Each run:
+repositories (the plugin repositories and tap). Each run:
 
 1. mints an installation token for ONLY the repositories in that run's slice, with `contents:
    write`, `pull-requests: write` and `workflows: write`. The `workflows` permission is what lets
@@ -78,7 +78,7 @@ repositories (the plugin repositories; not tap, which runs its own Renovate). Ea
 3. after a boot-record bump, runs the digest refresh as Renovate's one allowed post-upgrade command.
 
 The workflow cuts the same slice `renovate/global.js` does (`ORG_BOTS_BATCH`), because the token
-must be scoped before Renovate starts. tap, `all` and unknown names are refused for `only`.
+must be scoped before Renovate starts. `all` and unknown names are refused for `only`; tap is allowed.
 
 Until 2026-11-05 Renovate ran in fork mode as a machine user outside the org. That account was
 suspended, and the fork-mode controls (the fork bot's token, its variables, "Approve and run" on
@@ -411,8 +411,8 @@ run means only that the API calls succeeded.
 ## Running a job by hand
 
 ```sh
-gh workflow run renovate.yml -R unified-systems-com/org-bots            # the default, fleet: the rotation's next slice of discovered repos, not tap; add -f logLevel=debug to troubleshoot
-gh workflow run renovate.yml -R unified-systems-com/org-bots -f only=gryphon-playground-tap   # another single fleet repo (must be discovered; tap and "all" are refused)
+gh workflow run renovate.yml -R unified-systems-com/org-bots            # the default, fleet: the rotation's next slice of tap and the discovered repos; add -f logLevel=debug to troubleshoot
+gh workflow run renovate.yml -R unified-systems-com/org-bots -f only=gryphon-playground-tap   # another single fleet repo (must be tap or discovered; "all" is refused)
 gh workflow run release-please.yml -R unified-systems-com/org-bots                       # the rotation's next slice
 gh workflow run release-please.yml -R unified-systems-com/org-bots -f only=github-core-tap  # tap or one discovered repository
 gh workflow run fleet-conformance.yml -R unified-systems-com/org-bots   # the conformance sweep, off-schedule
@@ -455,7 +455,7 @@ repositories (`only=tap` runs it alone). Its `tap/tap.pr-bots.json` names `tap-r
 under its current id (352957841; see the bot-id command under "Before the first run"), so the
 App's release PRs pass tap's DCO and issue-link checks. `scripts/run-as-maintainer.sh` stays as a
 hand fallback; tap's release PR title pattern still ends `[via maintainer-run]`, which the title
-check expects. The notes below were
+check accepts and which a maintainer-run PR needs (an approved bot's PR is exempt from it). The notes below were
 written for fork mode and are kept for the history of those decisions; where they say "the bot's
 fork", an App-authored release branch is in tap itself.
 
