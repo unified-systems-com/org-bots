@@ -8,7 +8,7 @@ credential here that can write to org repositories, scoped per run as described 
 | --- | --- | --- | --- |
 | Renovate | the `tap-renovate` GitHub App (a short-lived token per run) | `.github/workflows/renovate.yml` | Opens dependency-update PRs from `renovate/*` branches in the repository itself |
 | release-please | the `tap-release-please` GitHub App (a short-lived token per run) | `.github/workflows/release-please.yml` | Opens and refreshes each repository's release PR in the repository itself, and tags and publishes the release once a human has merged that PR |
-| release-please, for tap | the maintainer, with their own `gh` login | `scripts/run-as-maintainer.sh`, `scripts/cut-release.sh` | The same two steps for tap, by hand, until tap's PR checks name the App's bot (see "tap") |
+| release-please, for tap (fallback) | the maintainer, with their own `gh` login | `scripts/run-as-maintainer.sh`, `scripts/cut-release.sh` | The same two steps for tap, by hand, when the App lane is unavailable (see "tap") |
 
 The repository is **public** (since 2026-09-28). Nothing here is secret, and the controls are
 designed to hold with the design known, not to depend on it being hidden. Merges to `main` need
@@ -25,7 +25,7 @@ on `pull_request`, so a fork's PR can trigger only GitHub's read-only CodeQL sca
 | `renovate/global.js` | Renovate's global config: tap (named) plus the discovered repositories, the bot identity (from environment variables), PR limits, no onboarding, no dashboard |
 | `renovate/preset.js` | The shared repository config every discovered repository gets, including tap's boot-record pin manager |
 | `renovate/boot-records/` | The digest refresh Renovate runs after bumping an in-package boot record: `refresh.py`, tap's `tap.boot_records` vendored at a pinned commit (`tap/`, `tap-vendor.json`), `vendor.py` to check or move the pin, and its offline tests |
-| `.github/workflows/release-please.yml` | release-please as the App, over the discovered repositories (not tap): `github-release`, then `release-pr`, then the boot-record digest refresh. Pilot: manual dispatch only, one rotation slice per run (`batch`, default `auto`) or one repository (`only`) |
+| `.github/workflows/release-please.yml` | release-please as the App, over the discovered repositories and tap: `github-release`, then `release-pr`, then the boot-record digest refresh. Pilot: manual dispatch only, one rotation slice per run (`batch`, default `auto`) or one repository (`only`) |
 | `scripts/next_batch.py` | Which slice of the fleet a Renovate run covers: the one after the last successful auto run, read from the run history (see [The ramp](#the-ramp)) |
 | `scripts/discover_fleet.py` | Which repositories both bots and `approve_bot_runs.py` act on: see [The fleet](#the-fleet) |
 | `scripts/cut-release.sh` | `github-release` run by the maintainer, for tap (the fleet's tags come from the App). Dry run by default |
@@ -65,7 +65,7 @@ was first applied.
 ## How Renovate runs
 
 The `renovate` job runs as the org-owned `tap-renovate` GitHub App, installed on selected
-repositories (the plugin repositories; not tap, which runs its own Renovate). Each run:
+repositories (the plugin repositories and tap). Each run:
 
 1. mints an installation token for ONLY the repositories in that run's slice, with `contents:
    write`, `pull-requests: write` and `workflows: write`. The `workflows` permission is what lets
@@ -78,7 +78,7 @@ repositories (the plugin repositories; not tap, which runs its own Renovate). Ea
 3. after a boot-record bump, runs the digest refresh as Renovate's one allowed post-upgrade command.
 
 The workflow cuts the same slice `renovate/global.js` does (`ORG_BOTS_BATCH`), because the token
-must be scoped before Renovate starts. tap, `all` and unknown names are refused for `only`.
+must be scoped before Renovate starts. `all` and unknown names are refused for `only`; tap is allowed.
 
 Until 2026-11-05 Renovate ran in fork mode as a machine user outside the org. That account was
 suspended, and the fork-mode controls (the fork bot's token, its variables, "Approve and run" on
@@ -411,10 +411,10 @@ run means only that the API calls succeeded.
 ## Running a job by hand
 
 ```sh
-gh workflow run renovate.yml -R unified-systems-com/org-bots            # the default, fleet: the rotation's next slice of discovered repos, not tap; add -f logLevel=debug to troubleshoot
-gh workflow run renovate.yml -R unified-systems-com/org-bots -f only=gryphon-playground-tap   # another single fleet repo (must be discovered; tap and "all" are refused)
+gh workflow run renovate.yml -R unified-systems-com/org-bots            # the default, fleet: the rotation's next slice of tap and the discovered repos; add -f logLevel=debug to troubleshoot
+gh workflow run renovate.yml -R unified-systems-com/org-bots -f only=gryphon-playground-tap   # another single fleet repo (must be tap or discovered; "all" is refused)
 gh workflow run release-please.yml -R unified-systems-com/org-bots                       # the rotation's next slice
-gh workflow run release-please.yml -R unified-systems-com/org-bots -f only=github-core-tap  # one discovered repository (not tap)
+gh workflow run release-please.yml -R unified-systems-com/org-bots -f only=github-core-tap  # tap or one discovered repository
 gh workflow run fleet-conformance.yml -R unified-systems-com/org-bots   # the conformance sweep, off-schedule
 gh run list -R unified-systems-com/org-bots --limit 5
 ```
@@ -450,11 +450,12 @@ it is held elsewhere: revoke it in the App's settings as well.
 
 ## tap
 
-tap is in scope for both bots, named rather than discovered. The release-please workflow does
-not run on it yet: it is served by `scripts/run-as-maintainer.sh` and `scripts/cut-release.sh`.
-Before it can move to the App lane, tap's `tap/tap.pr-bots.json` needs an entry for
-`tap-release-please[bot]` under its new id (see the bot-id command under "Before the first run"),
-and tap's release PR title pattern (`[via maintainer-run]`) needs a decision. The notes below were
+tap is in scope for both bots, named rather than discovered, in the same slices as the discovered
+repositories (`only=tap` runs it alone). Its `tap/tap.pr-bots.json` names `tap-release-please[bot]`
+under its current id (352957841; see the bot-id command under "Before the first run"), so the
+App's release PRs pass tap's DCO and issue-link checks. `scripts/run-as-maintainer.sh` stays as a
+hand fallback; tap's release PR title pattern still ends `[via maintainer-run]`, which the title
+check accepts and which a maintainer-run PR needs (an approved bot's PR is exempt from it). The notes below were
 written for fork mode and are kept for the history of those decisions; where they say "the bot's
 fork", an App-authored release branch is in tap itself.
 
@@ -470,9 +471,8 @@ trailer: an automated system never certifies the DCO.
 ### tap's own lanes
 
 tap's own `renovate.yml` and `release-please.yml` were retired on 2026-09-29 (tap@b62b5f5e).
-Renovate here now covers tap like any other repository: it is in the fleet slices, and
-`only=tap` runs it alone. The tap-renovate App must be installed on tap. release-please for tap
-is separate and is not changed by this.
+Renovate and release-please here now cover tap like any other repository: it is in the fleet
+slices, and `only=tap` runs either alone. The App must be installed on tap for each.
 
 ### tap's uv.lock refresh
 

@@ -2,9 +2,10 @@
 # carrying the `tap-plugin` topic, as the org-owned `tap-release-please` GitHub App.
 #
 # Which repositories: the same discovery Renovate uses (scripts/discover_fleet.py, the
-# `discover` job). It needs no secret: the org's repository list is public. tap is NOT run here
-# yet: it is served by scripts/run-as-maintainer.sh and scripts/cut-release.sh until its PR-check
-# identity list names this App's bot (README, "tap").
+# `discover` job), plus tap, which is named rather than discovered. It needs no secret: the org's
+# repository list is public. tap's PR-check identity list (tap/tap.pr-bots.json) names this App's
+# bot, so the App's PRs pass tap's DCO and issue-link checks (README, "tap"). scripts/run-as-
+# maintainer.sh remains the hand fallback.
 #
 # Per repository in this run's slice, in this order (what release-please-action does):
 #   1. `github-release`: if a release PR has been merged since the last run, tag the merge
@@ -42,7 +43,7 @@ on:
   workflow_dispatch:
     inputs:
       only:
-        description: "Run on this ONE repository (name, no owner, a discovered one; not tap). \"fleet\" (the default) runs this run's rotation slice."
+        description: "Run on this ONE repository (name, no owner): tap or a discovered one. \"fleet\" (the default) runs this run's rotation slice."
         required: false
         default: "fleet"
         type: string
@@ -113,7 +114,7 @@ jobs:
       - name: Choose this run's repositories
         id: slice
         env:
-          # tap is deliberately left out (`.fleet` only, not `.core`): see the header.
+          # tap is in the slices: the discovered repositories plus tap (`.fleet` and `.core`).
           FLEET_JSON: ${{ needs.discover.outputs.fleet }}
           # This run's slice of the fleet, <i>/<n> or "all" (scripts/next_batch.py).
           BATCH: ${{ needs.discover.outputs.batch }}
@@ -134,12 +135,12 @@ jobs:
           # Shuffled after the cut, so the per-run cap cannot keep serving the same first
           # repositories and starve the rest: over several runs every repository comes up.
           mapfile -t repos < <(jq -r --argjson i "$slice_i" --argjson n "$slice_n" \
-            '.fleet | sort | to_entries[] | select(.key % $n == $i - 1) | .value' \
+            '(.fleet + (.core // [])) | unique | to_entries[] | select(.key % $n == $i - 1) | .value' \
             <<< "$FLEET_JSON" | shuf)
           if [[ "$ONLY" != "fleet" ]]; then
             # One repository: it must be a discovered one, not an arbitrary name.
-            if ! jq -e --arg n "$ONLY" '.fleet | index($n) != null' <<< "$FLEET_JSON" > /dev/null; then
-              echo "::error::'${ONLY}' is not a discovered repository (tap and unknown names are refused)"
+            if ! jq -e --arg n "$ONLY" '(.fleet + (.core // [])) | index($n) != null' <<< "$FLEET_JSON" > /dev/null; then
+              echo "::error::'${ONLY}' is not tap or a discovered repository (unknown names are refused)"
               exit 1
             fi
             repos=("$ONLY")
@@ -152,7 +153,7 @@ jobs:
             # discover_fleet.py only emits plain names; checked again here before any use. An
             # empty or malformed list must never reach the token mint, which would scope the
             # token to every repository in the installation.
-            if [[ ! "$name" =~ ^[A-Za-z0-9._-]+$ || "$name" == "." || "$name" == ".." || "$name" == "org-bots" || "$name" == "tap" ]]; then
+            if [[ ! "$name" =~ ^[A-Za-z0-9._-]+$ || "$name" == "." || "$name" == ".." || "$name" == "org-bots" ]]; then
               echo "::error::discovery produced an unusable repository name"
               exit 1
             fi
