@@ -36,10 +36,13 @@
 name: release-please
 
 on:
-  # Pilot: hand-run only. The hourly schedule
-  #   schedule:
-  #     - cron: "23 * * * *"   # hourly
-  # comes back in the PR that ends the pilot.
+  # Hourly, one rotation slice per run (scripts/next_batch.py: the slice after the last successful
+  # auto run, so the whole fleet, tap included, is covered every eight runs and a gap moves
+  # nothing). A scheduled run has no inputs: `only` falls back to `fleet` and `batch` to `auto`
+  # below. The pilot (hand-run only, from 2026-11-05) ended with every dispatch green; the cap and
+  # the random pauses in the release loop are what keep an hourly rhythm from reading as a burst.
+  schedule:
+    - cron: "23 * * * *"   # hourly
   workflow_dispatch:
     inputs:
       only:
