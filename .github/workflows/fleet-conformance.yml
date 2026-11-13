@@ -59,7 +59,7 @@ jobs:
       # uv is the version tap's own `required-version` admits, read from the tap checkout above
       # rather than "latest": tap's `main` moves under this job, and a latest uv outside its range
       # failed the sweep on 10-16 and 10-24 (`Required uv version ... does not match`).
-      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
         with:
           version-file: tap/pyproject.toml
           enable-cache: false
