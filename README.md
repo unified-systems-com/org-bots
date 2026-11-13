@@ -25,7 +25,7 @@ on `pull_request`, so a fork's PR can trigger only GitHub's read-only CodeQL sca
 | `renovate/global.js` | Renovate's global config: tap (named) plus the discovered repositories, the bot identity (from environment variables), PR limits, no onboarding, no dashboard |
 | `renovate/preset.js` | The shared repository config every discovered repository gets, including tap's boot-record pin manager |
 | `renovate/boot-records/` | The digest refresh Renovate runs after bumping an in-package boot record: `refresh.py`, tap's `tap.boot_records` vendored at a pinned commit (`tap/`, `tap-vendor.json`), `vendor.py` to check or move the pin, and its offline tests |
-| `.github/workflows/release-please.yml` | release-please as the App, over the discovered repositories and tap: `github-release`, then `release-pr`, then the boot-record digest refresh. Pilot: manual dispatch only, one rotation slice per run (`batch`, default `auto`) or one repository (`only`) |
+| `.github/workflows/release-please.yml` | release-please as the App, over the discovered repositories and tap: `github-release`, then `release-pr`, then the boot-record digest refresh. Hourly, one rotation slice per run (tap is in the slices); by dispatch, a slice (`batch`, default `auto`) or one repository (`only`) |
 | `scripts/next_batch.py` | Which slice of the fleet a Renovate run covers: the one after the last successful auto run, read from the run history (see [The ramp](#the-ramp)) |
 | `scripts/discover_fleet.py` | Which repositories both bots and `approve_bot_runs.py` act on: see [The fleet](#the-fleet) |
 | `scripts/cut-release.sh` | `github-release` run by the maintainer, for tap (the fleet's tags come from the App). Dry run by default |
@@ -395,10 +395,12 @@ created went invisible to everyone else. So both jobs pace themselves:
   - **Each daily run needs approval.** Every run of the `bots` environment needs criticalsec's
     approval (above). An unapproved run does nothing and loses nothing; the rotation resumes at
     the first approved one.
-- **release-please** covers one slice of the discovered fleet per run (`batch`: `auto`, `all` or
+- **release-please** covers one slice of tap plus the discovered fleet per run (`batch`: `auto`, `all` or
   `<i>/<n>`), chosen by the same `scripts/next_batch.py` rotation as Renovate but read from its own
   history: the job label is `release-please (auto 3/8)`, distinct from Renovate's, so the two
-  rotations never interfere. It opens at most `MAX_NEW_PRS` (3) new release PRs per run, sleeping a random
+  rotations never interfere. It runs hourly (`23 * * * *`; the pilot's dispatch-only period ended
+  2026-11-13), so every repository is visited about every eight hours and a merged release PR is
+  tagged within the hour. It opens at most `MAX_NEW_PRS` (3) new release PRs per run, sleeping a random
   `PAUSE_MIN`..`PAUSE_MAX` (120-300) seconds after each. Repositories past the cap are deferred to the next run with a
   notice. Refreshing an existing release PR is not capped. The order is shuffled each run, so the
   cap cannot keep serving the same first repositories and starve the rest.
