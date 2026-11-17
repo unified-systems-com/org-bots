@@ -75,15 +75,17 @@ module.exports = {
       //     ranges on purpose and are never pinned. The pep621 manager normalises packageName
       //     per PEP 503 (lowercase, runs of `-_.` to `-`), and globs match case-insensitively,
       //     so `!*-tap` also covers `Computing_Core_Tap`. Every fleet package name ends in `-tap`.
-      //     A list of only negations matches every name the negations allow; `["*", "!*-tap"]`
-      //     reads the same but the config validator rejects `*` beside other patterns.
+      //     `!tap` is the core distribution, should a plugin ever declare it: PyPI's `tap` is
+      //     someone else's project, so a lookup would pin a stranger's package. A list of only
+      //     negations matches every name the negations allow; `["*", "!*-tap"]` reads the same
+      //     but the config validator rejects `*` beside other patterns.
       //   - matchDepTypes: what installs into tap alongside the plugin. Not
       //     `dependency-groups` (dev tools; plugin CI tests under tap's own uv.lock and never
       //     installs them), `build-system.requires` (the build backend, not a library the
       //     plugin runs), or `requires-python` (the interpreter, packageName `python`).
       matchManagers: ["pep621"],
       matchDepTypes: ["project.dependencies", "project.optional-dependencies"],
-      matchPackageNames: ["!*-tap"],
+      matchPackageNames: ["!*-tap", "!tap"],
       rangeStrategy: "pin",
     },
     {

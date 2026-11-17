@@ -219,7 +219,7 @@ class PresetPep621Test(unittest.TestCase):
         self.assertEqual(rule["matchManagers"], ["pep621"])
         self.assertEqual(rule["matchDepTypes"], ["project.dependencies", "project.optional-dependencies"])
         # The validator refuses `*` beside other patterns; negations alone are the idiom.
-        self.assertEqual(rule["matchPackageNames"], ["!*-tap"])
+        self.assertEqual(rule["matchPackageNames"], ["!*-tap", "!tap"])
 
     def test_third_party_runtime_deps_are_pinned(self) -> None:
         for name in ("boto3", "botocore", "sigstore", "pytenable", "zizmor"):
@@ -235,7 +235,7 @@ class PresetPep621Test(unittest.TestCase):
                     self.assertEqual(self.merged(name, dep_type).get("rangeStrategy"), "replace")
 
     def test_our_own_packages_stay_ranges(self) -> None:
-        for name in ("computing-core-tap", "Computing_Core_Tap", "compliance.core.tap", "aws-core-tap",
+        for name in ("tap", "TAP", "computing-core-tap", "Computing_Core_Tap", "compliance.core.tap", "aws-core-tap",
                      "git-serious-double-tap-tap"):
             with self.subTest(name=name):
                 self.assertNotIn("rangeStrategy", self.merged(name, "project.dependencies"))
