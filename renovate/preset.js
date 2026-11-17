@@ -6,6 +6,9 @@
 //   - the dependency dashboard (config:recommended turns it on; global.js forces it off), and
 //   - the lockfile-maintenance exemption from the PR limits (tap#625: tap's uv.lock only
 //     moves through that branch, and wolfi-base's daily digest used to starve it).
+// It adds two rules that are the fleet's own: exact pins for third-party pep621 runtime
+// dependencies (tap's uv.lock already pins every version it installs) and the AWS SDK group
+// (tap has no boto3).
 //
 // Why a module inside the global config, not a `local>unified-systems-com/org-bots:...`
 // preset: Renovate resolves a `local>` preset through the platform with the run's token.
@@ -56,6 +59,40 @@ module.exports = {
     {
       matchManagers: ["pep621"],
       groupName: "python dependencies (uv.lock)",
+    },
+    {
+      // A plugin has no lock file, so a floor (`boto3>=1.43.9`) is never "out of date" and
+      // never gets a PR, while every fresh install resolves whatever is newest that day. That
+      // is how botocore 1.44.4 broke aws-core-tap's CI on 2026-11-16 with no change of ours.
+      // Ruling (aws-build Q72a, 2026-11-17): "we shouldn't get hit by floating library
+      // changes, they should be intentionally updated after we've run tests." So third-party
+      // runtime dependencies are pinned exactly: Renovate first opens a PR turning each range
+      // into `==<current>`, then a PR per new release. Every bump is a PR that runs CI, and
+      // automerge stays off, so nothing moves until a human merges it green.
+      //
+      // Scope:
+      //   - matchPackageNames: our own packages (`computing-core-tap>=0.5.0,<0.11`) are
+      //     ranges on purpose and are never pinned. The pep621 manager normalises packageName
+      //     per PEP 503 (lowercase, runs of `-_.` to `-`), and globs match case-insensitively,
+      //     so `!*-tap` also covers `Computing_Core_Tap`. Every fleet package name ends in `-tap`.
+      //     A list of only negations matches every name the negations allow; `["*", "!*-tap"]`
+      //     reads the same but the config validator rejects `*` beside other patterns.
+      //   - matchDepTypes: what installs into tap alongside the plugin. Not
+      //     `dependency-groups` (dev tools; plugin CI tests under tap's own uv.lock and never
+      //     installs them), `build-system.requires` (the build backend, not a library the
+      //     plugin runs), or `requires-python` (the interpreter, packageName `python`).
+      matchManagers: ["pep621"],
+      matchDepTypes: ["project.dependencies", "project.optional-dependencies"],
+      matchPackageNames: ["!*-tap"],
+      rangeStrategy: "pin",
+    },
+    {
+      // boto3 X requires botocore >= X (within X's minor), so with both pinned exactly, a
+      // boto3 bump and a botocore bump in separate PRs each fail resolution on their own. One
+      // PR moves both. After the pep621 group above, because later rules win.
+      matchManagers: ["pep621"],
+      matchPackageNames: ["boto3", "botocore"],
+      groupName: "AWS SDK",
     },
     {
       matchManagers: ["npm"],
