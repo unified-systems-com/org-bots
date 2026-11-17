@@ -87,6 +87,26 @@ module.exports = {
       rangeStrategy: "pin",
     },
     {
+      // Except the libraries tap itself locks: a plugin installs into tap's environment, and
+      // pre-boot's per-plugin `uv pip install` keeps an installed version that satisfies the
+      // plugin's range but replaces it to satisfy a pin. So a plugin pin that Renovate moves
+      // apart from tap's uv.lock silently moves tap's locked version (tap#1220). Left as
+      // ranges, these follow tap's lock, which tap's own Renovate PRs move under tap's CI:
+      // pinned in effect, by the one lock that can see the whole environment. A PR still
+      // comes when a release falls outside the range (`replace`).
+      //
+      // Hand-kept: the third-party runtime libraries tap's uv.lock pins that a fleet plugin
+      // also declares (2026-11-17: requests 2.34.2 for anchore, nh3 0.3.7 for stackarmor-vdr,
+      // PyYAML 6.0.3 for github-core). PyYAML is locked only through tap's dev group, which
+      // the entrypoint's `uv sync --all-packages` installs by default; an install without dev
+      // groups would leave github-core's PyYAML floating. A plugin adding another library
+      // tap locks adds it here.
+      matchManagers: ["pep621"],
+      matchDepTypes: ["project.dependencies", "project.optional-dependencies"],
+      matchPackageNames: ["requests", "nh3", "pyyaml"],
+      rangeStrategy: "replace",
+    },
+    {
       // boto3 X requires botocore >= X (within X's minor), so with both pinned exactly, a
       // boto3 bump and a botocore bump in separate PRs each fail resolution on their own. One
       // PR moves both. After the pep621 group above, because later rules win.

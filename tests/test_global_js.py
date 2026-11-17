@@ -208,6 +208,12 @@ class PresetPep621Test(unittest.TestCase):
         self.assertEqual(len(found), 1, found)
         return found[0]
 
+    def test_tap_locked_exception_follows_the_pin_rule(self) -> None:
+        found = [i for i, r in enumerate(self.rules) if r.get("rangeStrategy") == "replace"]
+        self.assertEqual(len(found), 1, found)
+        self.assertGreater(found[0], self.pin_rule())
+        self.assertEqual(self.rules[found[0]]["matchDepTypes"], self.rules[self.pin_rule()]["matchDepTypes"])
+
     def test_pin_rule_is_pep621_runtime_third_party(self) -> None:
         rule = self.rules[self.pin_rule()]
         self.assertEqual(rule["matchManagers"], ["pep621"])
@@ -216,10 +222,17 @@ class PresetPep621Test(unittest.TestCase):
         self.assertEqual(rule["matchPackageNames"], ["!*-tap"])
 
     def test_third_party_runtime_deps_are_pinned(self) -> None:
-        for name in ("boto3", "botocore", "PyYAML", "nh3", "sigstore", "requests"):
+        for name in ("boto3", "botocore", "sigstore", "pytenable", "zizmor"):
             for dep_type in ("project.dependencies", "project.optional-dependencies"):
                 with self.subTest(name=name, dep_type=dep_type):
                     self.assertEqual(self.merged(name, dep_type).get("rangeStrategy"), "pin")
+
+    def test_libraries_tap_locks_follow_tap(self) -> None:
+        # tap#1220: a plugin pin would move tap's locked version at pre-boot's install.
+        for name in ("requests", "nh3", "PyYAML", "pyyaml"):
+            for dep_type in ("project.dependencies", "project.optional-dependencies"):
+                with self.subTest(name=name, dep_type=dep_type):
+                    self.assertEqual(self.merged(name, dep_type).get("rangeStrategy"), "replace")
 
     def test_our_own_packages_stay_ranges(self) -> None:
         for name in ("computing-core-tap", "Computing_Core_Tap", "compliance.core.tap", "aws-core-tap",
