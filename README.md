@@ -23,14 +23,14 @@ on `pull_request`, so a fork's PR can trigger only GitHub's read-only CodeQL sca
 | --- | --- |
 | `.github/workflows/renovate.yml` | Renovate as the `tap-renovate` App. By dispatch (the daily cron is commented out until the pilot is clean): one repository (`only`), or `fleet` (the default: the rotation's next slice of the discovered repositories, never tap) |
 | `renovate/global.js` | Renovate's global config: tap (named) plus the discovered repositories, the bot identity (from environment variables), PR limits, no onboarding, no dashboard |
-| `renovate/preset.js` | The shared repository config every discovered repository gets, including tap's boot-record pin manager |
+| `renovate/preset.js` | The shared repository config every discovered repository gets, including tap's boot-record pin manager, and exact pins for plugins' third-party Python dependencies (plugins have no lock file) |
 | `renovate/boot-records/` | The digest refresh Renovate runs after bumping an in-package boot record: `refresh.py`, tap's `tap.boot_records` vendored at a pinned commit (`tap/`, `tap-vendor.json`), `vendor.py` to check or move the pin, and its offline tests |
 | `.github/workflows/release-please.yml` | release-please as the App, over the discovered repositories and tap: `github-release`, then `release-pr`, then the boot-record digest refresh. Hourly, one rotation slice per run (tap is in the slices); by dispatch, a slice (`batch`, default `auto`) or one repository (`only`) |
 | `scripts/next_batch.py` | Which slice of the fleet a Renovate run covers: the one after the last successful auto run, read from the run history (see [The ramp](#the-ramp)) |
 | `scripts/discover_fleet.py` | Which repositories both bots and `approve_bot_runs.py` act on: see [The fleet](#the-fleet) |
 | `scripts/cut-release.sh` | `github-release` run by the maintainer, for tap (the fleet's tags come from the App). Dry run by default |
 | `scripts/approve_bot_runs.py` | Approves the old fork bot's PR workflow runs that wait for "Approve and run", by fixed rules. Dry run by default. Not used by the App lane; delete it once nothing needs it |
-| `tests/` | Offline tests for `approve_bot_runs.py`, `discover_fleet.py` and `renovate/global.js` (fixture JSON, no network; the `global.js` tests need `node` and are skipped without it): `python3 -m unittest discover -s tests` |
+| `tests/` | Offline tests for `approve_bot_runs.py`, `discover_fleet.py`, `renovate/global.js` and the pep621 rules of `renovate/preset.js` (fixture JSON, no network; the `global.js` and `preset.js` tests, both in `tests/test_global_js.py`, need `node` and are skipped without it): `python3 -m unittest discover -s tests` |
 | `renovate/boot-records/test_refresh.py` | Offline tests for the digest refresh and the vendored pin: `python3 -m unittest discover -s renovate/boot-records` (Python 3.11 or later, for `tomllib`) |
 | `release-please/package.json`, `package-lock.json` | Pin the release-please CLI and its whole dependency closure, for CI and for the script |
 | `.github/workflows/fleet-conformance.yml` | Nightly repository-scope conformance sweep (`validate_plugin --repo`) over every plugin repository in the org, discovered by name with tap's `tap.plugin_identity`. Read-only `GITHUB_TOKEN`; no App key, no `bots` environment; reports in the job summary and goes red on a failed check |
