@@ -1,14 +1,13 @@
 // Renovate GLOBAL (self-hosted) configuration for the unified-systems-com fleet.
 //
 // This file is read by .github/workflows/renovate.yml. It says WHICH repositories the App
-// works on (the repositories topic discovery found; tap is named below but the workflow never
-// selects it) and the bot-wide rules. It does not say how each repository's dependencies
+// works on (tap, named below, and the repositories topic discovery found) and the bot-wide rules. It does not say how each repository's dependencies
 // are grouped or labelled: that is repository config, which comes from
 //   - the repository's own renovate.json5, when it has one (today only tap does), or
 //   - renovate/preset.js in this repo, which every discovered repository gets below.
 //
 // Renovate runs as the `tap-renovate` GitHub App. The workflow mints an installation token for
-// the run's slice of the fleet only and passes it as the platform token; Renovate pushes its
+// the run's repositories only and passes it as the platform token; Renovate pushes its
 // branches to the target repository and opens the PR from there, authored by the App's bot.
 //
 // CommonJS rather than JSON5 so the bot identity comes from the environment (below) and the
@@ -27,16 +26,7 @@ const FLEET_PRESET = require("./preset.js");
 // tap/tap.pr-bots.json, which require GitHub account type `Bot`. tap-renovate[bot] (id
 // 315114127, type Bot) is in that file, so its PRs pass both checks. Renovate must NOT add a
 // Signed-off-by trailer: an automated system never certifies the DCO.
-const SELF_CONFIGURED = [
-  {
-    repository: `${ORG}/tap`,
-    // tap's former job ran with Renovate's default concurrent limit (10). Keep it, so
-    // moving tap back onto Renovate changes who runs it and nothing else. Its hourly
-    // limit is already the default 2, and its lockfile-maintenance branch is exempt from
-    // both limits by tap's own config.
-    prConcurrentLimit: 10,
-  },
-];
+const SELF_CONFIGURED = [{ repository: `${ORG}/tap` }];
 
 // Every other repository comes from topic discovery, never from a list here:
 // scripts/discover_fleet.py lists the unified-systems-com repositories carrying the
@@ -83,8 +73,7 @@ function discoveredFleet(raw) {
 
 const FLEET = discoveredFleet(process.env.ORG_BOTS_FLEET);
 
-// Sorted by name, because the workflow scopes the token with the same cut over the sorted list
-// of discovered names plus tap (every n-th from the i-th); the two must pick the same slice.
+// The workflow scopes the token to this same list: the discovered names plus tap.
 const ALL = [
   ...SELF_CONFIGURED,
   ...FLEET.map((name) => ({
@@ -93,13 +82,13 @@ const ALL = [
   })),
 ].sort((a, b) => (a.repository < b.repository ? -1 : a.repository > b.repository ? 1 : 0));
 
-// Pilot: ORG_BOTS_ONLY=<repository name> narrows a run to ONE repository from the list
-// above: tap, or a discovered repository. The workflow scopes the token to the run's
+// ORG_BOTS_ONLY=<repository name> narrows a run to ONE repository from the list above: tap, or
+// a discovered repository. The workflow scopes the token to the run's
 // repositories; discovery, and autodiscover off, are what decide which repositories get PRs.
 // A name that is not in the list is an error, never a way to reach a repository discovery
 // did not find (owner unified-systems-com AND the `tap-plugin` topic).
-// "all" (or nothing) and "fleet" both mean every listed repository, tap included: tap takes
-// part in the ramp's slices like any other repository. tap's own Renovate workflow was retired
+// "all" (or nothing) and "fleet" both mean every listed repository, tap included. tap's own
+// Renovate workflow was retired
 // on 2026-09-29 (tap@b62b5f5e), so no second Renovate runs on it. A workflow_dispatch string
 // input that is left empty is replaced by its default, so an empty value cannot be used to ask
 // for "all".
@@ -108,22 +97,6 @@ const ONLY = RAW === "all" || RAW === "fleet" ? "" : RAW;
 const repositories = ONLY ? ALL.filter((r) => r.repository === `${ORG}/${ONLY}`) : ALL;
 if (ONLY && repositories.length !== 1) {
   throw new Error(`ORG_BOTS_ONLY=${ONLY} is not tap or a discovered repository`);
-}
-
-// The ramp. On 2026-09-28 the old fork bot's first fleet-wide run opened about 50 PRs in 20
-// minutes, and GitHub's anti-abuse flagged the two-day-old account. So a fleet or all run
-// covers ONE slice of the list: ORG_BOTS_BATCH=<i>/<n> keeps every n-th repository starting
-// at the i-th (1-based), so n runs cover the whole list once. The workflow sets it (scripts/next_batch.py:
-// the slice after the last successful auto run, unless the dispatch names one); "all" or unset means no slicing, for a one-repo run.
-const BATCH = (process.env.ORG_BOTS_BATCH || "all").trim();
-let batched = repositories;
-if (!ONLY && BATCH !== "all") {
-  const m = /^([1-9][0-9]*)\/([1-9][0-9]*)$/.exec(BATCH);
-  if (!m || Number(m[1]) > Number(m[2])) {
-    throw new Error(`ORG_BOTS_BATCH=${BATCH} is not <i>/<n> with 1 <= i <= n`);
-  }
-  const [i, n] = [Number(m[1]), Number(m[2])];
-  batched = repositories.filter((_, k) => k % n === i - 1);
 }
 
 // The App's bot identity, from the workflow's environment (public values). Both are required:
@@ -143,7 +116,7 @@ module.exports = {
   // Never enumerate what the token can see: the list above (tap plus discovery) is the only
   // thing that decides which repositories get PRs.
   autodiscover: false,
-  repositories: batched,
+  repositories,
 
   username: LOGIN,
   gitAuthor: `${LOGIN} <${ID}+${LOGIN}@users.noreply.github.com>`,
@@ -152,10 +125,6 @@ module.exports = {
   // (with the preset above).
   onboarding: false,
   requireConfig: "optional",
-
-  // Pilot limits, per repository. A repository's own config can set its own.
-  prConcurrentLimit: 2,
-  prHourlyLimit: 2,
 
   // PR-only: a human merges every update.
   automerge: false,
