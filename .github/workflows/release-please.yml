@@ -26,10 +26,9 @@
 # hour and is revoked when the job ends. The client ID is the environment VARIABLE
 # `TAP_RELEASE_PLEASE_CLIENT_ID`; it is public.
 #
-# The App is installed on selected repositories, not all of them: a new repository is added to
-# the installation by the new-plugin procedure (README, "Adding a repository"). A repository
-# missing from the installation fails the token mint, and so the whole run, loudly, rather than
-# being skipped.
+# The App is installed on all repositories in the org, so a new repository needs no installation
+# step. The token is still minted for this run's repositories only; were one of them ever missing
+# from the installation, the mint, and so the whole run, would fail loudly rather than skip it.
 #
 # Adding a repository: the `tap-plugin` topic puts it in scope (new-plugin applies it). It is
 # released once it has release-please-config.json and .release-please-manifest.json at its
