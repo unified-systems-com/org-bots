@@ -178,20 +178,18 @@ module.exports = {
       matchDepNames: ["unified-systems-com/unified-ai-review"],
       groupName: "unified-ai-review reusable workflows",
     },
-    {
-      // The TAP floor (`requires_tap` in tap-plugin.toml, the third custom manager below) is
-      // the core version a plugin's PR checks run against, so it is also the baseline the
-      // plugin is proved on. Ruling (coley Q17a/Q19, 2026-11-20): the baseline is reset when
-      // TAP's MINOR version moves, and the fleet is cut over together. So a new minor opens
-      // one PR per plugin, raising the floor to the newest release of that minor; the PR's
-      // own checks then run on that core, and a red one names a plugin with work to do.
-      // Its own group and branch, after the boot-record group above (later rules win), so a
-      // floor move is never bundled with plugin pins.
-      matchManagers: ["custom.regex"],
-      matchDatasources: ["github-releases"],
-      matchDepNames: ["unified-systems-com/tap"],
-      groupName: "tap floor (requires_tap)",
-    },
+    // The TAP floor (`requires_tap` in tap-plugin.toml, the third custom manager below) is the
+    // core version a plugin's PR checks run against, so it is also the baseline the plugin is
+    // proved on. Ruling (coley Q17a/Q19, 2026-11-20): the baseline is reset when TAP's MINOR
+    // version moves, and the fleet is cut over together. So a new minor raises the floor to
+    // the newest release of that minor, and the PR's own checks then run on that core.
+    //
+    // It has NO group of its own, on purpose: it rides in "plugin pins (boot records)" above
+    // with the pins. The two cannot move apart. A shared plugin's first release on the new
+    // minor requires that core (aws_core 0.8.3 requires tap 0.4), so a pin PR alone fails on
+    // the old floor; and the releases pinned before it were built for the old core, so a
+    // floor PR alone fails on the old pins. One PR carries both, and is red only when the
+    // plugin itself has work to do.
     {
       // Patch releases never move the floor: a plugin tested on 0.4.2 is not re-floored for
       // 0.4.3. (Before 1.0 a breaking change goes in the minor, which Renovate also reports
@@ -257,7 +255,7 @@ module.exports = {
     // `v`, and the edit keeps the manifest's bare form). Only the plain one-bound form is
     // matched: a manifest that states an upper bound or a second clause has made a decision
     // this rule must not rewrite. A trailing comment on the line is left as it is. Which
-    // updates are offered is decided by the two package rules above (minor steps only).
+    // updates are offered is decided by the package rule above (minor steps only).
     {
       customType: "regex",
       managerFilePatterns: ["/^tap_plugin/[^/]+/tap-plugin\\.toml$/"],

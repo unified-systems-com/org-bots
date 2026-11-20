@@ -302,9 +302,11 @@ A plugin's manifest states the oldest core it supports: `requires_tap = ">=0.4.2
 the baseline the plugin is proved on. The preset's third custom manager reads that line and looks
 up tap's GitHub releases; two package rules then decide what is offered:
 
-- a new TAP **minor** opens one PR per plugin, in its own group (`tap floor (requires_tap)`),
-  raising the floor to the newest release of that minor. The PR's checks run on the new core, so a
-  red one names a plugin that has work to do before the fleet cuts over;
+- a new TAP **minor** raises the floor to the newest release of that minor. The change rides in
+  the same PR as the plugin pins (`plugin pins (boot records)`), because the two cannot move
+  apart: a shared plugin's first release on the new minor requires that core, and the releases
+  pinned before it were built for the old one. The PR's checks run on the new core, so a red one
+  names a plugin that has work to do before the fleet cuts over;
 - a **patch** release never moves the floor.
 
 Only the plain one-bound form is matched. A manifest with an upper bound or a second clause is

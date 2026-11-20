@@ -308,11 +308,13 @@ class PresetTapFloorTest(unittest.TestCase):
         off = [r for _, r in self.floor_rules() if r.get("enabled") is False]
         self.assertEqual([r.get("matchUpdateTypes") for r in off], [["patch"]])
 
-    def test_the_floor_has_its_own_group_after_the_boot_record_group(self) -> None:
-        boot = next(i for i, r in enumerate(self.rules) if r.get("groupName") == "plugin pins (boot records)")
-        mine = [i for i, r in self.floor_rules() if r.get("groupName") == "tap floor (requires_tap)"]
-        self.assertEqual(len(mine), 1)
-        self.assertGreater(mine[0], boot)  # later rules win
+    def test_the_floor_rides_with_the_plugin_pins(self) -> None:
+        """No group of its own: a pin PR alone fails on the old floor, a floor PR alone on the old pins."""
+        self.assertEqual([r.get("groupName") for _, r in self.floor_rules() if "groupName" in r], [])
+        groups = [r["groupName"] for r in self.rules
+                  if r.get("matchManagers") == ["custom.regex"] and "groupName" in r
+                  and not set(r) & {"matchDatasources", "matchDepNames", "matchFileNames"}]
+        self.assertEqual(groups, ["plugin pins (boot records)"])
 
     def test_the_floor_never_automerges(self) -> None:
         self.assertFalse(any(r.get("automerge") for _, r in self.floor_rules()))
