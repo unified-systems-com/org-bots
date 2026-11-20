@@ -103,6 +103,10 @@ CI boots an empty database. A migration that cannot run on an existing one passe
 When a core change rewrites stored data or a plugin squashes migrations:
 
 - Restore a real instance's dump into a scratch database. Never the live one.
+- The dump is real data. Use it only where the maintainer has said it may be held, on a machine
+  that already holds it. Do not copy it to CI, a shared host, a pull request or a log, and do not
+  paste rows from it into a report: report counts. Drop every scratch copy when the test is done,
+  and say in the report which copies still exist.
 - Install every plugin at its **release tag**, not at main.
 - Run exactly what the standard start-up runs: one plain `manage.py migrate`. Migrating apps one
   at a time by hand proves a different thing.
