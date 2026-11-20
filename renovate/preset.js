@@ -183,6 +183,8 @@ module.exports = {
     // proved on. Ruling (coley Q17a/Q19, 2026-11-20): the baseline is reset when TAP's MINOR
     // version moves, and the fleet is cut over together. So a new minor raises the floor to
     // the newest release of that minor, and the PR's own checks then run on that core.
+    // Renovate offers the newest release, not the next minor in sequence: a repository two
+    // minors behind jumps straight to the newest. Nothing here stages intermediate minors.
     //
     // It has NO group of its own, on purpose: it rides in "plugin pins (boot records)" above
     // with the pins. The two cannot move apart. A shared plugin's first release on the new
