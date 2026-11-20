@@ -178,6 +178,30 @@ module.exports = {
       matchDepNames: ["unified-systems-com/unified-ai-review"],
       groupName: "unified-ai-review reusable workflows",
     },
+    {
+      // The TAP floor (`requires_tap` in tap-plugin.toml, the third custom manager below) is
+      // the core version a plugin's PR checks run against, so it is also the baseline the
+      // plugin is proved on. Ruling (coley Q17a/Q19, 2026-11-20): the baseline is reset when
+      // TAP's MINOR version moves, and the fleet is cut over together. So a new minor opens
+      // one PR per plugin, raising the floor to the newest release of that minor; the PR's
+      // own checks then run on that core, and a red one names a plugin with work to do.
+      // Its own group and branch, after the boot-record group above (later rules win), so a
+      // floor move is never bundled with plugin pins.
+      matchManagers: ["custom.regex"],
+      matchDatasources: ["github-releases"],
+      matchDepNames: ["unified-systems-com/tap"],
+      groupName: "tap floor (requires_tap)",
+    },
+    {
+      // Patch releases never move the floor: a plugin tested on 0.4.2 is not re-floored for
+      // 0.4.3. (Before 1.0 a breaking change goes in the minor, which Renovate also reports
+      // as `minor`; `major` stays enabled for 1.0.)
+      matchManagers: ["custom.regex"],
+      matchDatasources: ["github-releases"],
+      matchDepNames: ["unified-systems-com/tap"],
+      matchUpdateTypes: ["patch"],
+      enabled: false,
+    },
   ],
   // Boot-record plugin pins (tap#635): a `rev` (the tag a human reads) and a `commit` (what
   // actually installs, tap#493) that must move together in one edit, or `tap.git_pin
@@ -227,6 +251,21 @@ module.exports = {
       currentValueTemplate: "main",
       datasourceTemplate: "git-refs",
       autoReplaceStringTemplate: "{{{replace '(?:[0-9a-f]{40}|main)$' newDigest replaceString}}}",
+    },
+    // The TAP floor: `requires_tap = ">=0.4.2"` in a plugin's manifest, looked up as a GitHub
+    // release of tap (tags are `v0.4.2`; semver versioning reads them with or without the
+    // `v`, and the edit keeps the manifest's bare form). Only the plain one-bound form is
+    // matched: a manifest that states an upper bound or a second clause has made a decision
+    // this rule must not rewrite. A trailing comment on the line is left as it is. Which
+    // updates are offered is decided by the two package rules above (minor steps only).
+    {
+      customType: "regex",
+      managerFilePatterns: ["/^tap_plugin/[^/]+/tap-plugin\\.toml$/"],
+      matchStrings: ["(?:^|\\n)requires_tap\\s*=\\s*\">=\\s*(?<currentValue>\\d+\\.\\d+\\.\\d+)\""],
+      depNameTemplate: "unified-systems-com/tap",
+      datasourceTemplate: "github-releases",
+      versioningTemplate: "semver",
+      extractVersionTemplate: "^v(?<version>.+)$",
     },
   ],
   lockFileMaintenance: {
