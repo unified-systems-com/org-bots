@@ -138,8 +138,11 @@ the repository's own rules and the maintainer's standing instructions. When they
 - Read the AI review on every PR before merging it, release PRs included, and answer it in
   writing. A release PR with no review posted is a question for the maintainer, not a pass.
 - Refresh a stale release PR through the release bot before reading it.
-- Cut with `scripts/cut-release.sh`: dry run first, read that it shows exactly one release for
-  the merged PR, then `--yes`. Then check the repo's `release-sbom` run.
+- After merging a release PR, let the App tag it: wait for the next release-please run, or
+  dispatch one with `-f only=<repo>`. A hand cut with `scripts/cut-release.sh` is optional; use
+  it only when the App's run failed or the lane is unavailable, dry run first, read that it shows
+  exactly one release for the merged PR, then `--yes`. Either way, check the repo's
+  `release-sbom` run.
 - Never merge past a branch rule. If a rule blocks you, report which rule.
 
 ## What this skill is not

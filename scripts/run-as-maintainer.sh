@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Run Renovate or release-please (stage 1, the release PR) against ONE repository, as YOU, from
-# your machine. The hand process for a repository no bot serves: tap after its App lanes were
-# retired (George, bom-bom Q75a, 2026-09-29), and any fleet repository while the fork bot is
+# your machine. The hand fallback for a repository the App cannot serve at the moment: it was
+# how tap was served after its own lanes were retired (George, bom-bom Q75a, 2026-09-29) and
+# before the App covered it again, and it stays the stopgap for any repository while the App is
 # unavailable.
 #
 #   scripts/run-as-maintainer.sh <repo> renovate [--dry-run | --yes]
@@ -15,8 +16,8 @@
 #             committed as you, with the commit subject suffixed "[via maintainer-run]" so the
 #             PR title passes tap's title check.
 #   release   `release-please release-pr` with your token (not --fork), which opens or
-#             refreshes the release PR and labels it. Cut the release afterwards with
-#             scripts/cut-release.sh, as for every repository.
+#             refreshes the release PR and labels it. Once it is merged, the App's next
+#             release-please run tags it; scripts/cut-release.sh is the optional hand cut.
 #   then      Sign-off. The tools' commits carry no Signed-off-by, and tap's DCO check wants one
 #             on every commit. For each open branch the tool just wrote (renovate/* or
 #             release-please--*), whose ONE commit over the default branch is yours and
