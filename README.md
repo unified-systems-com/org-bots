@@ -8,7 +8,7 @@ credential here that can write to org repositories, scoped per run as described 
 | --- | --- | --- | --- |
 | Renovate | the `tap-renovate` GitHub App (a short-lived token per run) | `.github/workflows/renovate.yml` | Opens dependency-update PRs from `renovate/*` branches in the repository itself |
 | release-please | the `tap-release-please` GitHub App (a short-lived token per run) | `.github/workflows/release-please.yml` | Opens and refreshes each repository's release PR in the repository itself, and tags and publishes the release once a human has merged that PR |
-| release-please, for tap (fallback) | the maintainer, with their own `gh` login | `scripts/run-as-maintainer.sh`, `scripts/cut-release.sh` | The same two steps for tap, by hand, when the App lane is unavailable (see "tap") |
+| release-please, by hand (optional) | the maintainer, with their own `gh` login | `scripts/run-as-maintainer.sh`, `scripts/cut-release.sh` | The same two steps for any one repository, tap included, by hand: when the App lane is unavailable or a run fails, or when you would rather not wait for the next run (see "Cutting a release") |
 
 The repository is **public** (since 2026-09-28). Nothing here is secret, and the controls are
 designed to hold with the design known, not to depend on it being hidden. Merges to `main` need
@@ -27,7 +27,7 @@ on `pull_request`, so a fork's PR can trigger only GitHub's read-only CodeQL sca
 | `renovate/boot-records/` | The digest refresh Renovate runs after bumping an in-package boot record: `refresh.py`, tap's `tap.boot_records` vendored at a pinned commit (`tap/`, `tap-vendor.json`), `vendor.py` to check or move the pin, and its offline tests |
 | `.github/workflows/release-please.yml` | release-please as the App, over the discovered repositories and tap: `github-release`, then `release-pr`, then the boot-record digest refresh. Hourly over the whole fleet, tap included; by dispatch, the same (`fleet`, the default) or one repository (`only`) |
 | `scripts/discover_fleet.py` | Which repositories both bots and `approve_bot_runs.py` act on: see [The fleet](#the-fleet) |
-| `scripts/cut-release.sh` | `github-release` run by the maintainer, for tap (the fleet's tags come from the App). Dry run by default |
+| `scripts/cut-release.sh` | `github-release` run by the maintainer, by hand, for one repository. Optional: the App's run tags every merged release PR, tap's included, on its own. Dry run by default |
 | `scripts/approve_bot_runs.py` | Approves the old fork bot's PR workflow runs that wait for "Approve and run", by fixed rules. Dry run by default. Not used by the App lane; delete it once nothing needs it |
 | `tests/` | Offline tests for `approve_bot_runs.py`, `discover_fleet.py`, `renovate/global.js` and the pep621 and TAP-floor rules of `renovate/preset.js` (fixture JSON, no network; the `global.js` and `preset.js` tests, both in `tests/test_global_js.py`, need `node` and are skipped without it): `python3 -m unittest discover -s tests` |
 | `renovate/boot-records/test_refresh.py` | Offline tests for the digest refresh and the vendored pin: `python3 -m unittest discover -s renovate/boot-records` (Python 3.11 or later, for `tomllib`) |
@@ -168,16 +168,24 @@ The tag is the one write a human does not make by hand for a fleet repository.
 
 ## Cutting a release
 
-**A fleet repository:** review and merge its release PR. That is the whole human step. The next
-release-please run that covers the repository tags the merge commit and publishes the GitHub
-Release, which starts the repository's tag-push workflows (`release-sbom.yml`). To do it now
+**Any repository, tap included:** review and merge its release PR. That is the whole human step.
+The next release-please run that covers the repository tags the merge commit and publishes the
+GitHub Release, which starts the repository's tag-push workflows (`release-sbom.yml`). To do it now
 instead of waiting for the next hourly run:
 
 ```sh
 gh workflow run release-please.yml -R unified-systems-com/org-bots -f only=github-core-tap
 ```
 
-**tap, and any repository while the App is unavailable:**
+The hourly schedule is GitHub's, and it is best-effort: a scheduled run can start late or be
+skipped, sometimes for hours. A dispatch is the usual way to hurry one.
+
+**Cutting by hand (optional).** `scripts/cut-release.sh` makes the same `github-release` call with
+your own `gh` login instead of the App's token. Nothing requires it. Reach for it when the App
+lane is unavailable (the key is revoked, or the `bots` environment is not approved), when a run
+failed for that repository, or when the merged release PR lacks `autorelease: pending` and you
+would rather the script add it than add it yourself. A tag cut by hand and a tag the App makes
+are the same tag; whichever runs first wins, and the other finds nothing to release.
 
 1. Merge the repository's release PR (it must carry `autorelease: pending`; the script adds it if
    it does not).
@@ -207,13 +215,14 @@ writes it to disk and never prints it.
 
 `scripts/run-as-maintainer.sh <repo> renovate|release [--yes]` runs the same pinned Renovate or
 release-please (stage 1) against ONE repository with your own `gh` login, from your machine. It
-is how tap is served since its App lanes were retired (George, 2026-09-29), and the stopgap for
-any fleet repository while the fork bot is unavailable. Dry run by default.
+was how tap was served between its own lanes' retirement (George, 2026-09-29) and the App
+covering it again, and it stays the stopgap for any repository while the App is unavailable. Dry run by default.
 
 - **renovate** needs the repository's own Renovate config (tap has `renovate.json5`), runs
   without fork mode, and commits as you with the subject suffixed `[via maintainer-run]`.
 - **release** opens or refreshes the release PR (`release-please release-pr`, not `--fork`),
-  labelled; cut the release afterwards with `scripts/cut-release.sh`, as always.
+  labelled. Once it is merged, the App's next run tags it, as for any release PR;
+  `scripts/cut-release.sh` is the optional hand cut (see "Cutting a release").
 - **Sign-off:** the tools' commits carry no `Signed-off-by`, and tap's DCO check wants one on
   every commit. With `--yes`, each branch the tool wrote whose one commit is yours and unsigned is
   amended with `git commit -s` and a `No-issue:` trailer and force-pushed with a lease: your

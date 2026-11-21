@@ -1,14 +1,19 @@
 #!/usr/bin/env bash
-# Cut a release: release-please stage 2 (`github-release`), run from the maintainer's machine.
+# Cut a release by hand: release-please stage 2 (`github-release`), run from the maintainer's
+# machine. OPTIONAL: org-bots' release-please workflow runs `github-release` as the
+# tap-release-please App on every run, hourly and by dispatch, over tap and the fleet, so a merged
+# release PR is tagged without this. Use it when the App lane is unavailable or its run failed, or
+# to cut now rather than wait (a dispatch with `-f only=<repo>` does that too). README, "Cutting a
+# release".
 #
 #   scripts/cut-release.sh <repo> [--dry-run | --yes]
 #
 # <repo> is a repository name in unified-systems-com (or unified-systems-com/<name>).
 # Default is --dry-run: print what would be tagged and change nothing. --yes cuts it.
 #
-# Why here and not in CI: creating a tag and a GitHub Release needs `contents: write` on the
-# target repository, and org-bots holds no write credential. This uses YOUR `gh auth token`,
-# so the release is cut by you, after you merged the release PR.
+# Why this exists beside CI: it predates the App, when org-bots held no write credential and
+# every tag had to be cut by hand. It now uses YOUR `gh auth token` in place of the App's, so a
+# release can still be cut when the App cannot cut it.
 #
 # What --yes does, in order:
 #   1. If the merged release PR lacks the `autorelease: pending` label (the fork bot cannot
