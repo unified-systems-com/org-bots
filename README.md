@@ -23,13 +23,13 @@ on `pull_request`, so a fork's PR can trigger only GitHub's read-only CodeQL sca
 | --- | --- |
 | `.github/workflows/renovate.yml` | Renovate as the `tap-renovate` App. Nightly (07:15 UTC) over the whole fleet: tap plus every discovered repository. By dispatch: the same (`fleet`, the default), or one repository (`only`) |
 | `renovate/global.js` | Renovate's global config: tap (named) plus the discovered repositories, the bot identity (from environment variables), no onboarding, no dashboard. PR limits are Renovate's defaults |
-| `renovate/preset.js` | The shared repository config every discovered repository gets, including tap's boot-record pin manager, and exact pins for plugins' third-party Python dependencies (plugins have no lock file) |
+| `renovate/preset.js` | The shared repository config every discovered repository gets, including tap's boot-record pin manager, exact pins for plugins' third-party Python dependencies (plugins have no lock file), and the TAP floor (`requires_tap`), which moves when TAP's minor version does and never for a patch |
 | `renovate/boot-records/` | The digest refresh Renovate runs after bumping an in-package boot record: `refresh.py`, tap's `tap.boot_records` vendored at a pinned commit (`tap/`, `tap-vendor.json`), `vendor.py` to check or move the pin, and its offline tests |
 | `.github/workflows/release-please.yml` | release-please as the App, over the discovered repositories and tap: `github-release`, then `release-pr`, then the boot-record digest refresh. Hourly over the whole fleet, tap included; by dispatch, the same (`fleet`, the default) or one repository (`only`) |
 | `scripts/discover_fleet.py` | Which repositories both bots and `approve_bot_runs.py` act on: see [The fleet](#the-fleet) |
 | `scripts/cut-release.sh` | `github-release` run by the maintainer, for tap (the fleet's tags come from the App). Dry run by default |
 | `scripts/approve_bot_runs.py` | Approves the old fork bot's PR workflow runs that wait for "Approve and run", by fixed rules. Dry run by default. Not used by the App lane; delete it once nothing needs it |
-| `tests/` | Offline tests for `approve_bot_runs.py`, `discover_fleet.py`, `renovate/global.js` and the pep621 rules of `renovate/preset.js` (fixture JSON, no network; the `global.js` and `preset.js` tests, both in `tests/test_global_js.py`, need `node` and are skipped without it): `python3 -m unittest discover -s tests` |
+| `tests/` | Offline tests for `approve_bot_runs.py`, `discover_fleet.py`, `renovate/global.js` and the pep621 and TAP-floor rules of `renovate/preset.js` (fixture JSON, no network; the `global.js` and `preset.js` tests, both in `tests/test_global_js.py`, need `node` and are skipped without it): `python3 -m unittest discover -s tests` |
 | `renovate/boot-records/test_refresh.py` | Offline tests for the digest refresh and the vendored pin: `python3 -m unittest discover -s renovate/boot-records` (Python 3.11 or later, for `tomllib`) |
 | `release-please/package.json`, `package-lock.json` | Pin the release-please CLI and its whole dependency closure, for CI and for the script |
 | `.github/workflows/fleet-conformance.yml` | Nightly repository-scope conformance sweep (`validate_plugin --repo`) over every plugin repository in the org, discovered by name with tap's `tap.plugin_identity`. Read-only `GITHUB_TOKEN`; no App key, no `bots` environment; reports in the job summary and goes red on a failed check |
@@ -294,6 +294,28 @@ The line shapes are those of the fleet's merged Renovate and release-please PRs;
 there is refused. Widening `ALLOWED_PATHS`, `CONTENT_RULES` or any other rule is the code owner's
 decision. The script uses only the
 Python standard library and your `gh` login; it calls `gh` with an argument list, never a shell.
+
+## The TAP floor
+
+A plugin's manifest states the oldest core it supports: `requires_tap = ">=0.4.2"` in
+`tap_plugin/<slug>/tap-plugin.toml`. Its PR checks run on exactly that core, so the floor is also
+the baseline the plugin is proved on. The preset's third custom manager reads that line and looks
+up tap's GitHub releases; two package rules then decide what is offered:
+
+- a new TAP **minor** raises the floor to the newest release of that minor. The change rides in
+  the same PR as the plugin pins (`plugin pins (boot records)`), because the two cannot move
+  apart: a shared plugin's first release on the new minor requires that core, and the releases
+  pinned before it were built for the old one. The PR's checks run on the new core, so a red one
+  names a plugin that has work to do before the fleet cuts over;
+- a **patch** release never moves the floor.
+
+The floor goes to the newest release Renovate finds, not to the next minor in sequence: a
+repository left two minors behind is offered the newest one directly. The rule does not stage
+intermediate minors.
+
+Only the plain one-bound form is matched. A manifest with an upper bound or a second clause is
+left alone, as is one that carries no `requires_tap` at all. Like every Renovate PR here, a floor
+PR is merged by a human.
 
 ## Boot-record digests
 

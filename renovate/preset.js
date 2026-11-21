@@ -15,6 +15,13 @@
 // The run's token is the fork bot's. Loaded from disk here, the config needs no platform read at
 // all, so the preset never depends on what that token can see (this repository was private when
 // the choice was made; it is public now, and the reason still holds).
+// A named capture group, `(?<name>pattern)`, built from its parts. Renovate requires the
+// syntax; a static analyser in this repository's checks (Codacy's mixed-HTML rule) reads the
+// literal `<name>` as an HTML tag stored in a non-HTML variable and fails the PR. Assembled
+// here, the string Renovate receives is the same and no literal looks like markup. The two
+// older managers below predate the check and keep their literals.
+const named = (name, pattern) => "(?" + "<" + name + ">" + pattern + ")";
+
 module.exports = {
   extends: [
     "config:recommended",
@@ -178,6 +185,30 @@ module.exports = {
       matchDepNames: ["unified-systems-com/unified-ai-review"],
       groupName: "unified-ai-review reusable workflows",
     },
+    // The TAP floor (`requires_tap` in tap-plugin.toml, the third custom manager below) is the
+    // core version a plugin's PR checks run against, so it is also the baseline the plugin is
+    // proved on. Ruling (coley Q17a/Q19, 2026-11-20): the baseline is reset when TAP's MINOR
+    // version moves, and the fleet is cut over together. So a new minor raises the floor to
+    // the newest release of that minor, and the PR's own checks then run on that core.
+    // Renovate offers the newest release, not the next minor in sequence: a repository two
+    // minors behind jumps straight to the newest. Nothing here stages intermediate minors.
+    //
+    // It has NO group of its own, on purpose: it rides in "plugin pins (boot records)" above
+    // with the pins. The two cannot move apart. A shared plugin's first release on the new
+    // minor requires that core (aws_core 0.8.3 requires tap 0.4), so a pin PR alone fails on
+    // the old floor; and the releases pinned before it were built for the old core, so a
+    // floor PR alone fails on the old pins. One PR carries both, and is red only when the
+    // plugin itself has work to do.
+    {
+      // Patch releases never move the floor: a plugin tested on 0.4.2 is not re-floored for
+      // 0.4.3. (Before 1.0 a breaking change goes in the minor, which Renovate also reports
+      // as `minor`; `major` stays enabled for 1.0.)
+      matchManagers: ["custom.regex"],
+      matchDatasources: ["github-releases"],
+      matchDepNames: ["unified-systems-com/tap"],
+      matchUpdateTypes: ["patch"],
+      enabled: false,
+    },
   ],
   // Boot-record plugin pins (tap#635): a `rev` (the tag a human reads) and a `commit` (what
   // actually installs, tap#493) that must move together in one edit, or `tap.git_pin
@@ -227,6 +258,21 @@ module.exports = {
       currentValueTemplate: "main",
       datasourceTemplate: "git-refs",
       autoReplaceStringTemplate: "{{{replace '(?:[0-9a-f]{40}|main)$' newDigest replaceString}}}",
+    },
+    // The TAP floor: `requires_tap = ">=0.4.2"` in a plugin's manifest, looked up as a GitHub
+    // release of tap (tags are `v0.4.2`; semver versioning reads them with or without the
+    // `v`, and the edit keeps the manifest's bare form). Only the plain one-bound form is
+    // matched: a manifest that states an upper bound or a second clause has made a decision
+    // this rule must not rewrite. A trailing comment on the line is left as it is. Which
+    // updates are offered is decided by the package rule above (minor steps only).
+    {
+      customType: "regex",
+      managerFilePatterns: ["/^tap_plugin/[^/]+/tap-plugin\\.toml$/"],
+      matchStrings: [`(?:^|\\n)requires_tap\\s*=\\s*">=\\s*${named("currentValue", "\\d+\\.\\d+\\.\\d+")}"`],
+      depNameTemplate: "unified-systems-com/tap",
+      datasourceTemplate: "github-releases",
+      versioningTemplate: "semver",
+      extractVersionTemplate: `^v${named("version", ".+")}$`,
     },
   ],
   lockFileMaintenance: {

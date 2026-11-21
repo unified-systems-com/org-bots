@@ -25,7 +25,8 @@ NODE = shutil.which("node")
 LOAD = (
     "try { const c = require(process.argv[1]);"
     " console.log(JSON.stringify({ok: c.repositories.map((r) => [r.repository, r.prConcurrentLimit, Boolean(r.customManagers)]),"
-    " rules: (c.repositories.find((r) => r.customManagers) || {}).packageRules}));"
+    " rules: (c.repositories.find((r) => r.customManagers) || {}).packageRules,"
+    " managers: (c.repositories.find((r) => r.customManagers) || {}).customManagers}));"
     " } catch (e) { console.log(JSON.stringify({error: e.message})); }"
 )
 FLEET = {"core": ["tap"], "fleet": ["dcom-tap", "tap-plugin-github-core"]}
@@ -255,6 +256,69 @@ class PresetPep621Test(unittest.TestCase):
     def test_nothing_automerges(self) -> None:
         for i in (self.pin_rule(), *[i for i, r in enumerate(self.rules) if r.get("groupName") == "AWS SDK"]):
             self.assertNotIn("automerge", self.rules[i])
+
+
+# The TAP floor rules of renovate/preset.js: `requires_tap` in a plugin's manifest follows
+# TAP's releases one MINOR at a time (ruling: coley Q17a/Q19, 2026-11-20).
+@unittest.skipUnless(NODE, "node is not on PATH")
+class PresetTapFloorTest(unittest.TestCase):
+    rules: list[dict[str, object]]
+    managers: list[dict[str, object]]
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        out = GlobalJsTest().load({"fleet": ["dcom-tap"]})
+        cls.rules = out["rules"]  # type: ignore[assignment]
+        cls.managers = out["managers"]  # type: ignore[assignment]
+
+    def manager(self) -> dict[str, object]:
+        found = [m for m in self.managers if m.get("datasourceTemplate") == "github-releases"]
+        self.assertEqual(len(found), 1, found)
+        return found[0]
+
+    def floor_rules(self) -> list[tuple[int, dict[str, object]]]:
+        return [(i, r) for i, r in enumerate(self.rules)
+                if r.get("matchDatasources") == ["github-releases"] and r.get("matchDepNames") == ["unified-systems-com/tap"]]
+
+    def test_only_the_plain_one_bound_floor_is_matched(self) -> None:
+        (pattern,) = self.manager()["matchStrings"]  # type: ignore[misc]
+        regex = re.compile(pattern.replace("(?<", "(?P<"))
+        cases = {
+            'plugin_version = "1.0.0"\nrequires_tap = ">=0.3.1"  # the floor\n': "0.3.1",
+            'requires_tap=">= 0.4.0"\n': "0.4.0",
+            'requires_tap = ">=0.3.1,<0.5"\n': None,
+            'requires_tap = "==0.3.1"\n': None,
+            '# requires_tap = ">=0.1.0"\n': None,
+            'not_requires_tap = ">=0.1.0"\n': None,
+        }
+        for text, want in cases.items():
+            found = regex.search(text)
+            self.assertEqual(found.group("currentValue") if found else None, want, text)
+
+    def test_it_reads_the_manifest_and_looks_up_tap_releases(self) -> None:
+        manager = self.manager()
+        (files,) = manager["managerFilePatterns"]  # type: ignore[misc]
+        regex = re.compile(files.strip("/"))
+        self.assertTrue(regex.search("tap_plugin/grype/tap-plugin.toml"))
+        self.assertFalse(regex.search("tap_plugin/grype/boot/tap-plugin.toml"))
+        self.assertFalse(regex.search("docs/tap-plugin.toml"))
+        self.assertEqual(manager["depNameTemplate"], "unified-systems-com/tap")
+
+    def test_patch_releases_never_move_the_floor(self) -> None:
+        off = [r for _, r in self.floor_rules() if r.get("enabled") is False]
+        self.assertEqual([r.get("matchUpdateTypes") for r in off], [["patch"]])
+
+    def test_the_floor_rides_with_the_plugin_pins(self) -> None:
+        """No group of its own: a pin PR alone fails on the old floor, a floor PR alone on the old pins."""
+        self.assertEqual([r.get("groupName") for _, r in self.floor_rules() if "groupName" in r], [])
+        groups = [r["groupName"] for r in self.rules
+                  if r.get("matchManagers") == ["custom.regex"] and "groupName" in r
+                  and not set(r) & {"matchDatasources", "matchDepNames", "matchFileNames"}]
+        self.assertEqual(groups, ["plugin pins (boot records)"])
+
+    def test_the_floor_never_automerges(self) -> None:
+        self.assertFalse(any(r.get("automerge") for _, r in self.floor_rules()))
+
 
 
 if __name__ == "__main__":
