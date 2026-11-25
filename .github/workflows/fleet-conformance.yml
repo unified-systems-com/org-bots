@@ -20,6 +20,15 @@
 # conformance gate uses, so both name shapes (`<slug>-tap`, legacy `tap-plugin-<slug>`) are found
 # and `tap` itself and look-alikes are refused (tap#309). Archived repositories are skipped.
 #
+# Specs-only repositories. A plugin repository with no `pyproject.toml` at its root has no package:
+# nothing to install, boot or test, so the ci/nightly lanes and the checks on them have nothing to
+# prove. That is the state of a plugin while it is still being specified (create-plugin-spec writes
+# the spec first, new-plugin scaffolds the package from it; coalfire-vdr-tap is one). Such a
+# repository is NOT validated and does not turn the sweep red, but it is never dropped silently: it
+# is named in the log as a notice and gets its own SPECS ONLY row in the summary. The rule reads
+# the tree, not a declaration, so a repository cannot opt out while it ships a package; the
+# moment `pyproject.toml` lands, the next run checks it in full.
+#
 # Credential: the workflow's own GITHUB_TOKEN, read-only. The org's plugin repositories and tap
 # are public; nothing here uses the `bots` environment or either App key.
 name: fleet-conformance
@@ -101,10 +110,15 @@ jobs:
           mkdir -p fleet results
           failed=()
           broken=()
+          specs_only=()
           while read -r name; do
             echo "::group::$name"
             if ! git clone --quiet --depth 1 "https://github.com/$OWNER/$name.git" "fleet/$name"; then
               echo "::error::$name: clone failed"; broken+=("$name"); echo "::endgroup::"; continue
+            fi
+            if [ ! -f "fleet/$name/pyproject.toml" ]; then
+              echo "::notice::$name: no pyproject.toml — specs-only repository, nothing to boot; repo-scope checks skipped"
+              specs_only+=("$name"); echo "::endgroup::"; continue
             fi
             status=0
             uv run --project tap --frozen --no-sync --no-build \
@@ -126,15 +140,19 @@ jobs:
           # One row per repository, one column per repo-* check (the columns are whatever the
           # checker ran, so a new check appears without a change here).
           ids=$(jq -rs '[.[].checks[] | select(.id | startswith("repo-")) | .id] | unique | .[]' results/*.json)
+          is_specs_only() { local s; for s in "${specs_only[@]}"; do [ "$s" = "$1" ] && return 0; done; return 1; }
           {
             echo "### Fleet conformance — repository-scope checks (tap \`$(git -C tap rev-parse --short HEAD)\`)"
             echo
-            echo "$(wc -l < roster.txt | tr -d ' ') repositories: ${#failed[@]} failing, ${#broken[@]} not checked."
+            echo "$(wc -l < roster.txt | tr -d ' ') repositories: ${#failed[@]} failing, ${#broken[@]} not checked, ${#specs_only[@]} specs-only (no package, skipped)."
             echo
             printf '| repository | verdict |'; for id in $ids; do printf " \`%s\` |" "$id"; done; echo
             printf '| --- | --- |'; for id in $ids; do printf ' --- |'; done; echo
             while read -r name; do
               f="results/$name.json"
+              if is_specs_only "$name"; then
+                printf '| %s | SPECS ONLY |' "$name"; for id in $ids; do printf ' — |'; done; echo; continue
+              fi
               if [ ! -s "$f" ] || ! jq -e '[.checks[] | select(.id | startswith("repo-"))] | length > 0' "$f" > /dev/null 2>&1; then
                 printf '| %s | NOT CHECKED |' "$name"; for id in $ids; do printf ' |'; done; echo; continue
               fi
@@ -149,5 +167,6 @@ jobs:
           if (( ${#failed[@]} + ${#broken[@]} )); then
             echo "failing: ${failed[*]:-none}"
             echo "not checked: ${broken[*]:-none}"
+            echo "specs-only (skipped): ${specs_only[*]:-none}"
             exit 1
           fi

@@ -32,7 +32,7 @@ on `pull_request`, so a fork's PR can trigger only GitHub's read-only CodeQL sca
 | `tests/` | Offline tests for `approve_bot_runs.py`, `discover_fleet.py`, `renovate/global.js` and the pep621 and TAP-floor rules of `renovate/preset.js` (fixture JSON, no network; the `global.js` and `preset.js` tests, both in `tests/test_global_js.py`, need `node` and are skipped without it): `python3 -m unittest discover -s tests` |
 | `renovate/boot-records/test_refresh.py` | Offline tests for the digest refresh and the vendored pin: `python3 -m unittest discover -s renovate/boot-records` (Python 3.11 or later, for `tomllib`) |
 | `release-please/package.json`, `package-lock.json` | Pin the release-please CLI and its whole dependency closure, for CI and for the script |
-| `.github/workflows/fleet-conformance.yml` | Nightly repository-scope conformance sweep (`validate_plugin --repo`) over every plugin repository in the org, discovered by name with tap's `tap.plugin_identity`. Read-only `GITHUB_TOKEN`; no App key, no `bots` environment; reports in the job summary and goes red on a failed check |
+| `.github/workflows/fleet-conformance.yml` | Nightly repository-scope conformance sweep (`validate_plugin --repo`) over every plugin repository in the org, discovered by name with tap's `tap.plugin_identity`. Read-only `GITHUB_TOKEN`; no App key, no `bots` environment; reports in the job summary and goes red on a failed check. A repository with no `pyproject.toml` (specs-only: no package yet) is skipped and listed as SPECS ONLY rather than failing |
 | `.github/CODEOWNERS` | Every path needs the owner's review |
 
 ## The fleet
